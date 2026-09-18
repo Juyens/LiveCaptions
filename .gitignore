@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Sesiones grabadas por la app
+/transcripts/
+
+# Icono generado por tools/make_ico.py
+/tools/live_captions.ico

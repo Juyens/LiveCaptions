@@ -1,0 +1,44 @@
+[project]
+name = "live-captions"
+version = "0.1.0"
+description = "Transcripcion en vivo del audio del escritorio, en ingles, con traduccion al espanol"
+readme = "README.md"
+authors = [{ name = "Juyens", email = "joseph.juliuscb@gmail.com" }]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faster-whisper>=1.2",
+    "pyside6>=6.8",
+    "pyaudiowpatch>=0.2.12.8",
+    "numpy>=2",
+    "soxr>=1.0",
+    "sentencepiece>=0.2",
+    "huggingface-hub>=0.25",
+    "nvidia-cublas-cu12>=12.4",
+    "nvidia-cudnn-cu12>=9.1",
+    "keyring>=25.7.0",
+    "httpx>=0.28.1",
+]
+
+[project.gui-scripts]
+live-captions = "live_captions.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/live_captions"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "pyinstaller>=6.11"]
+
+[tool.ruff]
+src = ["src", "tests", "tools"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "N", "B", "C4", "SIM", "RET", "PTH", "TID", "RUF", "ARG"]
+ignore = [
+    # Protocol implementations must keep the full signature, used or not.
+    "ARG002",
+]
