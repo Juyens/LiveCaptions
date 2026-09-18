@@ -4,6 +4,7 @@
 
 **Follow an English meeting in real time — transcript, Spanish translation and a copilot that drafts your answers.**
 
+[![Download](https://img.shields.io/badge/download-v0.1.0-ededed?style=flat-square)](https://github.com/Juyens/LiveCaptions/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab?style=flat-square)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.11-41cd52?style=flat-square)](https://doc.qt.io/qtforpython-6/)
 [![CUDA](https://img.shields.io/badge/CUDA-12-76b900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
@@ -124,6 +125,12 @@ The `⋯` menu shows which backend Whisper picked: `● cuda/float16` on an NVID
 | [httpx](https://www.python-httpx.org/) | 0.28.1 | The chat completions client, streaming included |
 | [keyring](https://github.com/jaraco/keyring) | 25.7.0 | API key in the Windows Credential Manager |
 | `nvidia-cublas-cu12` / `nvidia-cudnn-cu12` | 12.9 / 9.26 | CUDA libraries; no toolkit install needed |
+
+## Install
+
+Download the release, unzip it anywhere, run `LiveCaptions.exe`. Nothing to install: the CUDA
+libraries ship inside, which is why the folder is about 1.5 GB. The first run downloads the
+two models (1.8 GB) from Hugging Face; after that it works offline, except for the assistant.
 
 ## Building from source
 
