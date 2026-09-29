@@ -19,12 +19,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, Signal
 
 from live_captions import vad
 from live_captions.agreement import Agreement
 from live_captions.audio import CHUNK_SECONDS, AudioCallback, Capture, Source
 from live_captions.cuda import enable_cuda_dlls
+from live_captions.events import Signal
 from live_captions.segmenter import RATE, Segmenter
 from live_captions.storage import Session, Speaker
 from live_captions.transcriber import Transcriber
@@ -57,28 +57,26 @@ def detect_backend() -> tuple[str, str]:
     return "cpu", "int8"
 
 
-class Pipeline(QObject):
-    status = Signal(str)
-    ready = Signal(str)  # backend, p. ej. "cuda/float16"
-    level = Signal(float)  # nivel RMS 0..1 del audio de los altavoces
-    # Frase en curso de los demas: (confirmado, provisional); ("", "") la borra.
-    partial = Signal(str, str)
-    final = Signal(int, float, str, str)  # indice, segundos, hablante ("them"/"me"), ingles
-    translated = Signal(int, float, str)  # indice, segundos, espanol
-    # Traduccion del borrador: indice que tendra su frase final, espanol.
-    partial_translated = Signal(int, str)
-    started = Signal(str, str)  # nombre del dispositivo de salida, ruta del archivo .en.md
-    stopped = Signal()
-    failed = Signal(str)
-    warning = Signal(str)  # problemas no fatales (p. ej. sin microfono)
-
+class Pipeline:
     def __init__(
         self,
         transcripts_dir: Path,
-        parent: QObject | None = None,
         capture: Callable[[Source, AudioCallback], Capture] = Capture,
     ) -> None:
-        super().__init__(parent)
+        self.status = Signal()  # (texto)
+        self.ready = Signal()  # (backend, p. ej. "cuda/float16")
+        self.level = Signal()  # (nivel RMS 0..1 del audio de los altavoces)
+        # Frase en curso de los demas: (confirmado, provisional); ("", "") la borra.
+        self.partial = Signal()
+        self.final = Signal()  # (indice, segundos, hablante "them"/"me", ingles)
+        self.translated = Signal()  # (indice, segundos, espanol)
+        # Traduccion del borrador: (indice que tendra su frase final, espanol).
+        self.partial_translated = Signal()
+        self.started = Signal()  # (nombre del dispositivo de salida, ruta del .en.md)
+        self.stopped = Signal()
+        self.failed = Signal()  # (mensaje)
+        self.warning = Signal()  # (problemas no fatales, p. ej. sin microfono)
+
         self._transcripts_dir = transcripts_dir
         self._audio: queue.Queue[tuple[Speaker, np.ndarray]] = queue.Queue()
         self._pending: queue.Queue[_Final | _Draft | None] = queue.Queue()

@@ -11,12 +11,6 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
-
-from live_captions.icon import app_icon
-from live_captions.ui import theme
-from live_captions.ui.main_window import MainWindow
-
 
 def transcripts_dir() -> Path:
     """Carpeta de sesiones: siempre en Documentos, aunque el .exe viva en otro sitio."""
@@ -58,10 +52,17 @@ def selftest(report: Path) -> int:
         import keyring
 
         result["keyring"] = type(keyring.get_keyring()).__name__
+
+        # La ventana: pythonnet, WinForms y el runtime WebView2 (si falta, pywebview cae al
+        # motor de Internet Explorer y la interfaz no funcionaria).
+        from webview.platforms import winforms
+
+        result["webview"] = winforms.renderer
         result["ok"] = (
             bool(result["translation"])
             and result["silence"] == ""
             and result["keyring"] == "WinVaultKeyring"
+            and result["webview"] == "edgechromium"
         )
     except Exception:
         result["error"] = traceback.format_exc()
@@ -106,15 +107,10 @@ def main() -> int:
 
     claim_taskbar_identity()
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("Live Captions")
-    app.setOrganizationName("Juyens")
-    app.setWindowIcon(app_icon())
-    app.setStyleSheet(theme.QSS)
+    from live_captions.app import App
 
-    window = MainWindow(transcripts_dir())
-    window.show()
-    return app.exec()
+    App(transcripts_dir()).run()
+    return 0
 
 
 if __name__ == "__main__":

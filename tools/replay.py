@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QCoreApplication, QObject, QTimer, Slot
 
 from live_captions import vad
 from live_captions.audio import CHUNK_SECONDS, AudioCallback, Device, Source
@@ -93,29 +92,26 @@ class Event:
     text: str
 
 
-class Recorder(QObject):
-    """Vive en el hilo principal, como la UI: las senales le llegan encoladas."""
+class Recorder:
+    """Anota cada senal con el momento del WAV en que llega (desde el hilo que la emite)."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.events: list[Event] = []
+        self._lock = threading.Lock()
 
     def _add(self, kind: str, text: str) -> None:
-        self.events.append(Event(time.monotonic() - WavCapture.t0, kind, text))
+        with self._lock:
+            self.events.append(Event(time.monotonic() - WavCapture.t0, kind, text))
 
-    @Slot(str, str)
     def partial(self, committed: str, tentative: str) -> None:
         self._add("partial", f"{committed} {tentative}".strip())
 
-    @Slot(int, float, str, str)
     def final(self, _index: int, _seconds: float, _speaker: str, text: str) -> None:
         self._add("final", text)
 
-    @Slot(int, float, str)
     def translated(self, _index: int, _seconds: float, text: str) -> None:
         self._add("translated", text)
 
-    @Slot(int, str)
     def partial_translated(self, _index: int, text: str) -> None:
         self._add("partial_es", text)
 
@@ -165,8 +161,10 @@ def report(events: list[Event], spans: list[tuple[float, float]], reference: str
         if values:
             print(f"{key:>9}: mediana {statistics.median(values):.2f} s, max {max(values):.2f} s")
     finals = " ".join(e.text for e in events if e.kind == "final")
-    print(f"\n{sum(e.kind == 'partial' for e in events)} borradores, "
-          f"{sum(e.kind == 'final' for e in events)} frases finales")
+    print(
+        f"\n{sum(e.kind == 'partial' for e in events)} borradores, "
+        f"{sum(e.kind == 'final' for e in events)} frases finales"
+    )
     print("Transcripcion final:\n  " + "\n  ".join(e.text for e in events if e.kind == "final"))
     if reference is not None:
         print(f"\nWER: {wer(reference, finals):.1%}")
@@ -183,7 +181,6 @@ def main() -> None:
         logging.basicConfig(format="%(relativeCreated)7.0f ms  %(message)s")
         logging.getLogger("live_captions").setLevel(logging.DEBUG)
 
-    app = QCoreApplication(sys.argv)
     WavCapture.audio = load_wav(args.wav)
     spans = sentences(WavCapture.audio)
     recorder = Recorder()
@@ -194,20 +191,23 @@ def main() -> None:
     pipeline.final.connect(recorder.final)
     pipeline.translated.connect(recorder.translated)
     pipeline.partial_translated.connect(recorder.partial_translated)
-    pipeline.failed.connect(lambda message: (print(message), app.quit()))
     pipeline.status.connect(lambda message: print(message, flush=True))
+    ready, stopped = threading.Event(), threading.Event()
+    failed: list[str] = []
+    pipeline.failed.connect(lambda message: (failed.append(message), ready.set()))
+    pipeline.ready.connect(lambda _backend: ready.set())
+    pipeline.stopped.connect(stopped.set)
 
-    duration = WavCapture.audio.size / RATE
-
-    def on_ready(backend: str) -> None:
-        print(f"Modelos listos ({backend}); reproduciendo {duration:.0f} s...", flush=True)
-        pipeline.start()
-        QTimer.singleShot(int((duration + 3) * 1000), pipeline.stop)
-
-    pipeline.ready.connect(on_ready)
-    pipeline.stopped.connect(app.quit)
     pipeline.load_models()
-    app.exec()
+    ready.wait()
+    if failed:
+        sys.exit(failed[0])
+    duration = WavCapture.audio.size / RATE
+    print(f"Modelos listos; reproduciendo {duration:.0f} s...", flush=True)
+    pipeline.start()
+    time.sleep(duration + 3)
+    pipeline.stop()
+    stopped.wait()
 
     reference = args.reference.read_text(encoding="utf-8") if args.reference else None
     report(recorder.events, spans, reference)

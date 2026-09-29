@@ -1,7 +1,7 @@
 """Icono de la aplicacion dibujado en codigo.
 
-Se dibuja en vez de cargarse de un archivo para que la ventana, la barra de tareas y el .exe
-salgan siempre del mismo sitio: `tools/make_ico.py` genera el .ico con esta misma funcion.
+`tools/make_ico.py` genera con esta funcion el .ico que PyInstaller incrusta en el .exe, del
+que Windows saca el icono de la ventana, la barra de tareas y el Explorador.
 
 Motivo: dos lineas de subtitulo sobre fondo oscuro y un punto verde de "en directo".
 """
@@ -9,7 +9,7 @@ Motivo: dos lineas de subtitulo sobre fondo oscuro y un punto verde de "en direc
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QBrush, QColor, QImage, QPainter
 
 BACKGROUND = "#0a0a0a"
 FOREGROUND = "#ededed"
@@ -52,10 +52,3 @@ def render(size: int) -> QImage:
     painter.end()
     return image
 
-
-def app_icon() -> QIcon:
-    """Icono con todas las resoluciones que pide Windows (barra de tareas, Alt+Tab, titulo)."""
-    icon = QIcon()
-    for size in SIZES:
-        icon.addPixmap(QPixmap.fromImage(render(size)))
-    return icon

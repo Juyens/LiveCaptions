@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QBuffer, QByteArray
 from PySide6.QtGui import QGuiApplication, QImage
 
-from live_captions.icon import SIZES, render
+from icon import SIZES, render
 
 HEADER = struct.Struct("<HHH")  # reservado, tipo (1 = icono), numero de imagenes
 ENTRY = struct.Struct("<BBBBHHII")  # ancho, alto, colores, reservado, planos, bits, bytes, offset

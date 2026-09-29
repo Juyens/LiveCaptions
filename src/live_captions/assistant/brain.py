@@ -15,11 +15,10 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QObject, Signal
-
 from live_captions.assistant.config import LLMConfig
 from live_captions.assistant.detector import looks_like_question
 from live_captions.assistant.llm import ChatClient, LLMError, Message
+from live_captions.events import Signal
 from live_captions.storage import format_clock
 
 log = logging.getLogger(__name__)
@@ -97,17 +96,16 @@ class ImageNote:
     description: str = ""  # lo que leyo el modelo de vision
 
 
-class Assistant(QObject):
-    suggestion = Signal(object)  # Suggestion
-    image_read = Signal(object)  # ImageNote ya descrita
-    chat_started = Signal(str)  # pregunta del usuario
-    chat_delta = Signal(str)
-    chat_done = Signal(str)  # respuesta completa
-    status = Signal(str)
-    error = Signal(str)
+class Assistant:
+    def __init__(self) -> None:
+        self.suggestion = Signal()  # (Suggestion)
+        self.image_read = Signal()  # (ImageNote ya descrita)
+        self.chat_started = Signal()  # (pregunta del usuario)
+        self.chat_delta = Signal()  # (trozo de respuesta)
+        self.chat_done = Signal()  # (respuesta completa)
+        self.status = Signal()  # (texto)
+        self.error = Signal()  # (mensaje)
 
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
         self._config = LLMConfig()
         self._client: ChatClient | None = None
         self._context = ""

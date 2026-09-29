@@ -7,7 +7,6 @@ authors = [{ name = "Juyens", email = "joseph.juliuscb@gmail.com" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "faster-whisper>=1.2",
-    "pyside6>=6.8",
     "pyaudiowpatch>=0.2.12.8",
     "numpy>=2",
     "soxr>=1.0",
@@ -17,6 +16,7 @@ dependencies = [
     "nvidia-cudnn-cu12>=9.1",
     "keyring>=25.7.0",
     "httpx>=0.28.1",
+    "pywebview>=6.2.1",
 ]
 
 [project.gui-scripts]
@@ -30,7 +30,12 @@ build-backend = "hatchling.build"
 packages = ["src/live_captions"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8", "pyinstaller>=6.11"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+    "pyinstaller>=6.11",
+    "pyside6>=6.8",
+]
 
 [tool.ruff]
 src = ["src", "tests", "tools"]

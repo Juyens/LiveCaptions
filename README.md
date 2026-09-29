@@ -6,10 +6,10 @@
 
 [![Download](https://img.shields.io/badge/download-v0.1.0-ededed?style=flat-square)](https://github.com/Juyens/LiveCaptions/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab?style=flat-square)](https://www.python.org/)
-[![PySide6](https://img.shields.io/badge/PySide6-6.11-41cd52?style=flat-square)](https://doc.qt.io/qtforpython-6/)
+[![pywebview](https://img.shields.io/badge/pywebview-6.2-ededed?style=flat-square)](https://pywebview.flowrl.com/)
 [![CUDA](https://img.shields.io/badge/CUDA-12-76b900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078d4?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-36%20passing-0cce6b?style=flat-square)](#building-from-source)
+[![Tests](https://img.shields.io/badge/tests-42%20passing-0cce6b?style=flat-square)](#building-from-source)
 
 <img src="docs/captura.png" width="820" alt="Live Captions during a meeting: English transcript, Spanish translation and a suggested answer">
 
@@ -41,7 +41,15 @@ Three panels, each of which can be hidden from the toolbar:
 
 The toolbar has the **Escuchar / Detener** button, the status line, an audio level, a clock,
 toggles for the two optional panels and the microphone, and a `⋯` menu with clear, open the
-sessions folder, always on top and the assistant settings.
+sessions folder, always on top and the settings. Panels are resized by dragging the gap
+between them; sizes, toggles, window position and the meeting context are remembered in
+`%APPDATA%\LiveCaptions\settings.json`.
+
+The window is a web page (HTML, CSS and plain JavaScript in `src/live_captions/web/`) shown by
+[pywebview](https://pywebview.flowrl.com/) in WebView2, the Chromium engine that ships with
+Windows. The audio, GPU and assistant threads never touch it directly: they queue events,
+and one thread hands them to the page in batches every 30 ms, so a busy window can never
+slow Whisper down.
 
 Everything is written to disk as it happens — `~/Documents/LiveCaptions/<date>.en.md`,
 `.es.md` and `.assistant.md`, one timestamped line per sentence — so a crash mid-meeting
@@ -132,7 +140,7 @@ The `⋯` menu shows which backend Whisper picked: `● cuda/float16` on an NVID
 
 | Package | Version | What it does |
 | :--- | :--- | :--- |
-| [PySide6](https://doc.qt.io/qtforpython-6/) | 6.11.2 | The window and the widgets |
+| [pywebview](https://pywebview.flowrl.com/) | 6.2.1 | The window: the web UI in WebView2 |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | 1.2.1 | Whisper on CTranslate2, plus Silero VAD |
 | [CTranslate2](https://github.com/OpenNMT/CTranslate2) | 4.8.2 | Inference engine for Whisper and opus-mt, CUDA backend |
 | [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch) | 0.2.12.8 | PortAudio with WASAPI loopback |
@@ -156,15 +164,16 @@ NVIDIA driver is enough — the CUDA DLLs come with the wheels.
 ```bash
 uv sync
 uv run python -m live_captions      # run it
-uv run pytest                       # 36 tests: sentence splitting, drafts, storage, detector, client
+uv run pytest                       # 42 tests: sentence splitting, drafts, settings, bridge, storage, assistant
 uv run python tools/replay.py meeting.wav --reference meeting.txt   # latency and WER
 uv run python tools/build.py        # dist/LiveCaptions/, then copied to ~/Documents/DevTools/LiveCaptions
 ```
 
 The build is a PyInstaller folder of about 1.5 GB, almost all of it CUDA (`cublasLt64_12.dll`
 alone is 638 MB); three cuDNN libraries Whisper never touches are left out. The icon is drawn
-in code (`src/live_captions/icon.py`) and `tools/make_ico.py` turns it into the multi-size
-`.ico` the executable embeds, so the window, the taskbar and Explorer all show the same one.
+in code (`tools/icon.py`, with PySide6 as a dev-only dependency) and `tools/make_ico.py` turns
+it into the multi-size `.ico` the executable embeds, so the window, the taskbar and Explorer
+all show the same one.
 
 To check a packaged build without opening the window:
 

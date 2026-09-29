@@ -37,7 +37,10 @@ binaries = (
     + collect_dynamic_libs("soxr")
     + collect_dynamic_libs("sentencepiece")
 )
-datas = collect_data_files("faster_whisper")  # incluye el modelo de VAD (silero)
+datas = collect_data_files("faster_whisper") + [  # faster_whisper trae el modelo de VAD (silero)
+    # La interfaz: HTML, CSS y JS que pywebview carga en WebView2.
+    (str(ROOT / "src" / "live_captions" / "web"), "live_captions/web"),
+]
 
 a = Analysis(
     ["src/live_captions/__main__.py"],
@@ -52,18 +55,16 @@ a = Analysis(
         "sentencepiece",
         "keyring.backends.Windows",
         "win32ctypes.core",
+        "webview.platforms.winforms",
+        "webview.platforms.edgechromium",
     ],
     excludes=[
         "tkinter",
         "unittest",
         "pytest",
-        "PySide6.QtWebEngineCore",
-        "PySide6.QtQuick",
-        "PySide6.QtQml",
-        "PySide6.Qt3DCore",
-        "PySide6.QtCharts",
-        "PySide6.QtDataVisualization",
-        "PySide6.QtWebEngineWidgets",
+        # Solo se usa para dibujar el .ico (tools/icon.py); la app no lo importa.
+        "PySide6",
+        "shiboken6",
     ],
     noarchive=False,
 )

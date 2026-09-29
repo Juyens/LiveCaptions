@@ -81,13 +81,11 @@ def test_parse_json_tolerates_fences_and_prose() -> None:
 
 
 def test_retired_models_are_replaced_on_load(tmp_path) -> None:
-    from PySide6.QtCore import QSettings
-
     from live_captions.assistant import config
+    from live_captions.settings import Settings
 
-    settings = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
-    settings.setValue("llm/provider", "groq")
-    settings.setValue("llm/model", "llama-3.3-70b-versatile")
+    settings = Settings(tmp_path / "s.json", legacy={})
+    settings.update({"llm/provider": "groq", "llm/model": "llama-3.3-70b-versatile"})
     assert config.load(settings).model == "openai/gpt-oss-120b"
-    settings.setValue("llm/model", "qwen/qwen3.6-27b")
+    settings.set("llm/model", "qwen/qwen3.6-27b")
     assert config.load(settings).model == "qwen/qwen3.6-27b"

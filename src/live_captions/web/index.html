@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Captions</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="bar">
+    <button id="record" class="record" disabled>Escuchar</button>
+    <div id="status" class="status" role="status">Cargando modelos...</div>
+    <div class="meter" title="Nivel del audio del escritorio"><div id="level"></div></div>
+    <div id="clock" class="clock">00:00:00</div>
+    <div class="toggles">
+      <button class="toggle" id="show-spanish" aria-pressed="true" title="Mostrar u ocultar la traduccion">Español</button>
+      <button class="toggle" id="show-assistant" aria-pressed="true" title="Mostrar u ocultar el asistente">Asistente</button>
+      <button class="toggle" id="mic" aria-pressed="true" title="Transcribir tambien lo que dices tu (Tú)">Mic</button>
+    </div>
+    <div class="more">
+      <button id="more" class="icon" aria-haspopup="menu" aria-expanded="false" title="Mas">⋯</button>
+      <div id="menu" class="menu" role="menu" hidden>
+        <button role="menuitem" data-action="clear">Limpiar transcripcion</button>
+        <button role="menuitem" data-action="folder">Abrir carpeta de sesiones</button>
+        <hr>
+        <button role="menuitemcheckbox" data-action="on-top" aria-checked="false"><span class="check"></span>Siempre encima</button>
+        <button role="menuitem" data-action="settings">Ajustes...</button>
+        <hr>
+        <div id="backend" class="backend">cargando modelos...</div>
+      </div>
+    </div>
+  </header>
+
+  <main id="panes" class="panes">
+    <section class="pane" id="pane-english" data-pane="english">
+      <header class="pane-head">
+        <h2>English</h2><span class="count" id="count-english"></span>
+        <button class="ghost copy" data-copy="english" disabled>Copiar</button>
+      </header>
+      <div class="transcript" id="english" data-empty="Lo que se oiga en el escritorio aparecera aqui."></div>
+    </section>
+
+
+    <section class="pane" id="pane-spanish" data-pane="spanish">
+      <header class="pane-head">
+        <h2>Español</h2><span class="count" id="count-spanish"></span>
+        <button class="ghost copy" data-copy="spanish" disabled>Copiar</button>
+      </header>
+      <div class="transcript" id="spanish" data-empty="Traduccion de cada frase, mientras se habla."></div>
+    </section>
+
+
+    <section class="pane assistant" id="pane-assistant" data-pane="assistant">
+      <header class="pane-head">
+        <h2>Asistente</h2><span class="badge" id="assistant-badge"></span>
+        <button class="ghost" id="clear-feed" title="Vacia las tarjetas y quita las imagenes del contexto">Limpiar</button>
+        <button class="ghost" id="open-settings">Ajustes</button>
+      </header>
+      <textarea id="context" class="context" rows="3" spellcheck="false"
+        placeholder="Contexto: quien eres, de que va la reunion, que quieres decir y que no..."></textarea>
+      <div class="feed" id="feed">
+        <p class="hint" id="feed-empty">Cuando detecte que te preguntan algo, aqui apareceran respuestas sugeridas.
+          Tambien puedes preguntarme lo que quieras sobre la reunion, o enviarme una imagen
+          (boton Imagen o Ctrl+V con una captura) para que la tenga en cuenta.</p>
+      </div>
+      <div class="assistant-status" id="assistant-status"></div>
+      <div class="preview" id="preview" hidden>
+        <img id="preview-img" alt="">
+        <span>Imagen lista. Escribe de que trata y pulsa Enter.</span>
+        <button class="ghost" id="discard-image">Descartar</button>
+      </div>
+      <form class="composer" id="composer">
+        <input id="question" autocomplete="off" placeholder="Pregunta al asistente... (Enter para enviar)">
+        <input type="file" id="file" accept="image/*" hidden>
+        <button type="button" id="attach" title="Adjunta una imagen (o pega una captura con Ctrl+V en el campo)">Imagen</button>
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="settings" class="settings">
+    <form method="dialog" id="settings-form">
+      <h2>Ajustes</h2>
+      <fieldset>
+        <legend>Asistente</legend>
+        <label>Proveedor <select name="provider"></select></label>
+        <label>URL base <input name="base_url" spellcheck="false"></label>
+        <label>Modelo
+          <span class="row"><input name="model" list="models" spellcheck="false"><button type="button" class="ghost" id="load-models">Cargar modelos</button></span>
+        </label>
+        <label>Modelo con vision <input name="vision_model" list="models" spellcheck="false" placeholder="Vacio = sin imagenes en el chat"></label>
+        <label>API key
+          <span class="row"><input name="api_key" type="password" spellcheck="false" placeholder="Se guarda en el Administrador de credenciales de Windows"><button type="button" class="ghost" id="show-key" aria-pressed="false">Mostrar</button></span>
+        </label>
+        <datalist id="models"></datalist>
+        <p class="hint">Groq, Cerebras, NVIDIA y OpenRouter tienen niveles gratuitos; la key se crea en su web.
+          «Local» apunta a un llama-server en tu PC y no necesita key.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Tu y tus reuniones</legend>
+        <label>Tu nombre <input name="user_name" placeholder="Nombre completo y apodos, separados por comas"
+          title="Cualquiera de estas palabras en la transcripcion cuenta como que te nombran"></label>
+        <label>Vocabulario <input name="vocabulary" placeholder="Postgres, Kubernetes, Acme Corp, ..."
+          title="Nombres, productos y siglas de tus reuniones: Whisper los recibe como pista y los reconoce mejor"></label>
+      </fieldset>
+      <footer>
+        <button type="button" id="test-connection">Probar conexion</button>
+        <span class="result" id="settings-result"></span>
+        <button value="cancel" formnovalidate>Cancelar</button>
+        <button value="save" class="primary">Guardar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

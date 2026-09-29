@@ -1,8 +1,8 @@
 """Configuracion del asistente: proveedor, modelo y API key.
 
 Todos los proveedores hablan el protocolo de chat de OpenAI, incluido un `llama-server`
-local, asi que cambiar de uno a otro es cambiar URL y modelo. La API key no va a QSettings
-(registro en claro): se guarda en el Administrador de credenciales de Windows via keyring.
+local, asi que cambiar de uno a otro es cambiar URL y modelo. La API key no va al JSON de
+ajustes (texto en claro): se guarda en el Administrador de credenciales de Windows via keyring.
 """
 
 from __future__ import annotations
@@ -11,7 +11,8 @@ import contextlib
 from dataclasses import dataclass
 
 import keyring
-from PySide6.QtCore import QSettings
+
+from live_captions.settings import Settings
 
 SERVICE = "LiveCaptions"
 
@@ -93,22 +94,26 @@ class LLMConfig:
         return bool(self.base_url and self.model) and (not self.needs_key or bool(self.api_key))
 
 
-def load(settings: QSettings) -> LLMConfig:
+def load(settings: Settings) -> LLMConfig:
     default = LLMConfig()
     return LLMConfig(
-        provider=str(settings.value("llm/provider", default.provider)),
-        base_url=str(settings.value("llm/base_url", default.base_url)),
-        model=RETIRED.get(model := str(settings.value("llm/model", default.model)), model),
-        user_name=str(settings.value("llm/user_name", "")),
-        vision_model=str(settings.value("llm/vision_model", default.vision_model)),
-        vocabulary=str(settings.value("transcription/vocabulary", "")),
+        provider=str(settings.get("llm/provider", default.provider)),
+        base_url=str(settings.get("llm/base_url", default.base_url)),
+        model=RETIRED.get(model := str(settings.get("llm/model", default.model)), model),
+        user_name=str(settings.get("llm/user_name", "")),
+        vision_model=str(settings.get("llm/vision_model", default.vision_model)),
+        vocabulary=str(settings.get("transcription/vocabulary", "")),
     )
 
 
-def save(settings: QSettings, config: LLMConfig) -> None:
-    settings.setValue("llm/provider", config.provider)
-    settings.setValue("llm/base_url", config.base_url)
-    settings.setValue("llm/model", config.model)
-    settings.setValue("llm/user_name", config.user_name)
-    settings.setValue("llm/vision_model", config.vision_model)
-    settings.setValue("transcription/vocabulary", config.vocabulary)
+def save(settings: Settings, config: LLMConfig) -> None:
+    settings.update(
+        {
+            "llm/provider": config.provider,
+            "llm/base_url": config.base_url,
+            "llm/model": config.model,
+            "llm/user_name": config.user_name,
+            "llm/vision_model": config.vision_model,
+            "transcription/vocabulary": config.vocabulary,
+        }
+    )
