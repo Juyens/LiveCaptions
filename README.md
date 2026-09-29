@@ -4,7 +4,7 @@
 
 **Follow an English meeting in real time — transcript, Spanish translation and a copilot that drafts your answers.**
 
-[![Download](https://img.shields.io/badge/download-v0.2.0-ededed?style=flat-square)](https://github.com/Juyens/LiveCaptions/releases/latest)
+[![Download](https://img.shields.io/badge/download-v0.2.1-ededed?style=flat-square)](https://github.com/Juyens/LiveCaptions/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab?style=flat-square)](https://www.python.org/)
 [![pywebview](https://img.shields.io/badge/pywebview-6.2-ededed?style=flat-square)](https://pywebview.flowrl.com/)
 [![CUDA](https://img.shields.io/badge/CUDA-12-76b900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)

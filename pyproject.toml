@@ -1,6 +1,6 @@
 [project]
 name = "live-captions"
-version = "0.2.0"
+version = "0.2.1"
 description = "Transcripcion en vivo del audio del escritorio, en ingles, con traduccion al espanol"
 readme = "README.md"
 authors = [{ name = "Juyens", email = "joseph.juliuscb@gmail.com" }]
