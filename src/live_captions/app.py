@@ -19,6 +19,7 @@ import webview
 from live_captions.assistant import config as llm_config
 from live_captions.assistant.brain import Assistant, ImageNote, Suggestion
 from live_captions.assistant.llm import ChatClient, LLMError
+from live_captions.audio import list_microphones
 from live_captions.bridge import Bridge
 from live_captions.pipeline import Pipeline
 from live_captions.settings import Settings
@@ -59,6 +60,7 @@ class App:
         self.assistant = Assistant()
         self._wire()
         self.pipeline.set_mic_enabled(bool(self.settings.get("mic", True)))
+        self.pipeline.set_mic_device(str(self.settings.get("mic/device", "")))
         self.assistant.set_context(str(self.settings.get("context", "")))
         self.configure(llm_config.load(self.settings))
 
@@ -74,6 +76,7 @@ class App:
         pipeline.ready.connect(self._on_ready)
         pipeline.started.connect(self._on_started)
         pipeline.stopped.connect(self._on_stopped)
+        pipeline.mic_opened.connect(lambda name: send("mic_opened", name))
         pipeline.level.connect(lambda rms: send("level", round(rms, 4)))
         pipeline.partial.connect(lambda c, t: send("partial", {"committed": c, "tentative": t}))
         pipeline.final.connect(self._on_final)
@@ -86,6 +89,8 @@ class App:
 
         assistant.suggestion.connect(self._on_suggestion)
         assistant.image_read.connect(self._on_image_read)
+        assistant.image_failed.connect(self._on_image_failed)
+        assistant.vision_model_changed.connect(self._on_vision_model_changed)
         assistant.chat_started.connect(self._on_chat_started)
         assistant.chat_delta.connect(lambda delta: send("chat_delta", delta))
         assistant.chat_done.connect(self._on_chat_done)
@@ -132,6 +137,19 @@ class App:
     def _on_image_read(self, image: ImageNote) -> None:
         self.bridge.send("image_read", {"id": image.id, "description": image.description})
         self.pipeline.log_assistant(f"Imagen {image.id} leida: {image.description}")
+
+    def _on_image_failed(self, image_id: int, reason: str) -> None:
+        self.bridge.send("image_failed", {"id": image_id, "reason": reason})
+        self.pipeline.log_assistant(f"Imagen {image_id} sin leer: {reason}")
+
+    def _on_vision_model_changed(self, model: str) -> None:
+        previous = str(self.settings.get("llm/vision_model", "")) or "el modelo de vision"
+        self.settings.set("llm/vision_model", model)
+        self.bridge.send("assistant_config", self.assistant_badge())
+        self.bridge.send(
+            "assistant_status",
+            {"text": f"El proveedor ya no ofrece {previous}; las imagenes se leen con {model}."},
+        )
 
     def _on_chat_started(self, question: str) -> None:
         self.bridge.send("chat_started", question)
@@ -222,7 +240,8 @@ class Api:
             "on_top": bool(settings.get("on_top", False)),
             "spanish": bool(settings.get("spanish", True)),
             "assistant": bool(settings.get("assistant", True)),
-            "widths": settings.get("widths"),
+            "mic_device": str(settings.get("mic/device", "")),
+            "sidebar_width": settings.get("sidebar_width"),
             "context": str(settings.get("context", "")),
             "assistant_config": app.assistant_badge(),
         }
@@ -242,6 +261,23 @@ class Api:
         self._app.settings.set("mic", bool(enabled))
         self._app.pipeline.set_mic_enabled(bool(enabled))
 
+    def list_microphones(self) -> dict[str, Any]:
+        """Microfonos de Windows, el predeterminado y el elegido ("" = predeterminado)."""
+        try:
+            names, default = list_microphones()
+        except Exception as exc:
+            log.warning("No se pudieron listar los microfonos: %s", exc)
+            names, default = [], ""
+        return {
+            "devices": names,
+            "default": default,
+            "selected": str(self._app.settings.get("mic/device", "")),
+        }
+
+    def set_mic_device(self, name: str) -> None:
+        self._app.settings.set("mic/device", str(name))
+        self._app.pipeline.set_mic_device(str(name))
+
     # -- ventana y preferencias --------------------------------------------------------
 
     def set_on_top(self, enabled: bool) -> None:
@@ -249,9 +285,13 @@ class Api:
         if self._app.window is not None:
             self._app.window.on_top = bool(enabled)
 
-    def set_layout(self, spanish: bool, assistant: bool, widths: list[float] | None) -> None:
+    def set_layout(self, spanish: bool, assistant: bool, sidebar_width: int | None) -> None:
         self._app.settings.update(
-            {"spanish": bool(spanish), "assistant": bool(assistant), "widths": widths}
+            {
+                "spanish": bool(spanish),
+                "assistant": bool(assistant),
+                "sidebar_width": int(sidebar_width) if sidebar_width else None,
+            }
         )
 
     def open_folder(self) -> None:
@@ -312,16 +352,26 @@ class Api:
             return {"ok": False, "message": f"Error: {exc}"}
         finally:
             client.close()
-        return {"ok": True, "message": f"Conectado. El modelo respondio: {reply[:40]!r}"}
+        model = str(values.get("model", "")).strip()
+        if not reply:
+            return {"ok": True, "message": f"Conectado a {model} (respondio sin texto)."}
+        return {"ok": True, "message": f"Conectado a {model}: «{reply[:40]}»"}
 
     def list_models(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Modelos del proveedor; `vision` son los que aceptan imagenes, si el proveedor lo dice."""
         client = _client_from(values)
         try:
-            models = client.list_models()
+            catalog = client.catalog()
         except LLMError as exc:
             return {"ok": False, "message": str(exc)}
         except Exception as exc:
             return {"ok": False, "message": f"Error: {exc}"}
         finally:
             client.close()
-        return {"ok": True, "models": models, "message": f"{len(models)} modelos disponibles"}
+        known = any(model.vision is not None for model in catalog)
+        return {
+            "ok": True,
+            "models": [model.id for model in catalog],
+            "vision": [model.id for model in catalog if model.vision] if known else None,
+            "message": f"{len(catalog)} modelos disponibles",
+        }

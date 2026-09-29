@@ -3,16 +3,50 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 Message = dict[str, Any]  # el contenido puede ser texto o una lista de bloques (imagenes)
 
+# Groq, nivel gratuito: el modelo de vision admite 1000 tokens de salida por minuto, y una
+# peticion con un tope mayor se rechaza entera. Una lectura detallada ocupa unos 400-600.
+IMAGE_MAX_TOKENS = 900
+MAX_RATE_WAIT_S = 20.0  # si el proveedor pide esperar mas, se avisa en vez de esperar
+
 
 class LLMError(Exception):
-    """Error legible para la UI."""
+    """Error legible para la UI; `status` es el codigo HTTP cuando lo hubo."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    id: str
+    vision: bool | None  # None: el proveedor no dice que entradas admite
+
+
+def _error(response: httpx.Response) -> LLMError:
+    return LLMError(_explain(response), response.status_code)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Segundos que pide esperar un 429 (cabecera Retry-After o "try again in 3.48s")."""
+    header = response.headers.get("retry-after")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    match = re.search(r"try again in ([\d.]+)s", response.text)
+    return float(match.group(1)) if match else None
 
 
 def _explain(response: httpx.Response) -> str:
@@ -25,6 +59,25 @@ def _explain(response: httpx.Response) -> str:
     if response.status_code == 429:
         return f"Limite de peticiones alcanzado ({detail})"
     return f"HTTP {response.status_code}: {detail}"
+
+
+def _model_info(item: dict[str, Any]) -> ModelInfo:
+    inputs = item.get("input_modalities")
+    if inputs is None:  # OpenRouter lo anida en "architecture"
+        inputs = (item.get("architecture") or {}).get("input_modalities")
+    return ModelInfo(str(item["id"]), None if inputs is None else "image" in inputs)
+
+
+def pick_vision_model(models: list[ModelInfo], previous: str = "") -> str:
+    """Modelo que acepta imagenes para sustituir a `previous`; "" si no hay ninguno.
+
+    Primero uno de la misma familia (qwen/qwen3.6 -> qwen/qwen3.8), que suele ser el relevo
+    cuando un proveedor retira un modelo.
+    """
+    vision = [m.id for m in models if m.vision]
+    family = previous.split("/")[0] if "/" in previous else ""
+    same = [m for m in vision if family and m.startswith(family + "/")]
+    return (same or vision or [""])[0]
 
 
 def parse_sse(lines: Iterable[str]) -> Iterator[str]:
@@ -72,14 +125,20 @@ class ChatClient:
 
     def list_models(self) -> list[str]:
         """IDs de modelos que ofrece el proveedor (GET /models), ordenados."""
+        return [model.id for model in self.catalog()]
+
+    def catalog(self) -> list[ModelInfo]:
+        """Modelos del proveedor y si aceptan imagenes (Groq y OpenRouter lo indican)."""
         try:
             response = self._http.get("/models")
         except httpx.HTTPError as exc:
             raise LLMError(f"Sin conexion con el proveedor: {exc}") from exc
         if response.status_code >= 400:
-            raise LLMError(_explain(response))
+            raise _error(response)
         try:
-            return sorted(str(m["id"]) for m in response.json()["data"])
+            return sorted(
+                (_model_info(item) for item in response.json()["data"]), key=lambda m: m.id
+            )
         except (KeyError, TypeError, ValueError) as exc:
             raise LLMError("Respuesta inesperada al listar modelos") from exc
 
@@ -100,7 +159,7 @@ class ChatClient:
         except httpx.HTTPError as exc:
             raise LLMError(f"Sin conexion con el proveedor: {exc}") from exc
         if response.status_code >= 400:
-            raise LLMError(_explain(response))
+            raise _error(response)
         try:
             return response.json()["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, ValueError) as exc:
@@ -121,16 +180,20 @@ class ChatClient:
             with self._http.stream("POST", "/chat/completions", json=body) as response:
                 if response.status_code >= 400:
                     response.read()
-                    raise LLMError(_explain(response))
+                    raise _error(response)
                 yield from parse_sse(response.iter_lines())
         except httpx.HTTPError as exc:
             raise LLMError(f"Sin conexion con el proveedor: {exc}") from exc
 
     def describe_image(self, data_url: str, prompt: str, *, model: str) -> str:
-        """Una unica llamada a un modelo con vision; devuelve su lectura de la imagen."""
+        """Una unica llamada a un modelo con vision; devuelve su lectura de la imagen.
+
+        Un 429 que pide esperar poco se reintenta una vez: en el nivel gratuito basta con que
+        otra lectura acabe de gastar el cupo del minuto.
+        """
         body = {
             "model": model,
-            "max_tokens": 1500,
+            "max_tokens": IMAGE_MAX_TOKENS,
             "temperature": 0.2,
             "messages": [
                 {
@@ -142,19 +205,29 @@ class ChatClient:
                 }
             ],
         }
-        try:
-            response = self._http.post("/chat/completions", json=body, timeout=90)
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Sin conexion con el proveedor: {exc}") from exc
+        for attempt in range(2):
+            try:
+                response = self._http.post("/chat/completions", json=body, timeout=90)
+            except httpx.HTTPError as exc:
+                raise LLMError(f"Sin conexion con el proveedor: {exc}") from exc
+            wait = _retry_after(response) if response.status_code == 429 else None
+            if attempt == 0 and wait is not None and wait <= MAX_RATE_WAIT_S:
+                time.sleep(wait + 0.5)
+                continue
+            break
         if response.status_code >= 400:
-            raise LLMError(_explain(response))
+            raise _error(response)
         try:
             return (response.json()["choices"][0]["message"]["content"] or "").strip()
         except (KeyError, IndexError, ValueError) as exc:
             raise LLMError("Respuesta inesperada del proveedor") from exc
 
     def ping(self) -> str:
-        """Peticion minima para comprobar URL, key y modelo. Devuelve el texto recibido."""
+        """Peticion minima para comprobar URL, key y modelo. Devuelve el texto recibido.
+
+        Margen de tokens holgado: los modelos que razonan (gpt-oss, qwen3) gastan los primeros
+        pensando, y con un tope de 5 devolvian una respuesta vacia aunque todo funcionara.
+        """
         return self.complete(
-            [{"role": "user", "content": "Reply with the single word: ok"}], max_tokens=5
+            [{"role": "user", "content": "Reply with the single word: ok"}], max_tokens=200
         ).strip()

@@ -76,6 +76,7 @@ class Pipeline:
         self.stopped = Signal()
         self.failed = Signal()  # (mensaje)
         self.warning = Signal()  # (problemas no fatales, p. ej. sin microfono)
+        self.mic_opened = Signal()  # (nombre del microfono que se esta escuchando)
 
         self._transcripts_dir = transcripts_dir
         self._audio: queue.Queue[tuple[Speaker, np.ndarray]] = queue.Queue()
@@ -84,6 +85,7 @@ class Pipeline:
         self._mic = capture("mic", lambda chunk: self._audio.put(("me", chunk)))
         self._mic_enabled = True
         self._mic_open = False
+        self._mic_lock = threading.Lock()  # la pagina puede cambiarlo desde varios hilos
         self._hotwords = ""
         self._transcriber: Transcriber | None = None
         self._translator: Translator | None = None
@@ -139,22 +141,36 @@ class Pipeline:
 
     def set_mic_enabled(self, enabled: bool) -> None:
         """Enciende o apaga el microfono, tambien en mitad de una sesion."""
-        self._mic_enabled = enabled
-        if not self.is_running:
-            return
-        if enabled and not self._mic_open:
-            self._open_mic()
-        elif not enabled and self._mic_open:
-            self._mic.stop()
-            self._mic_open = False
+        with self._mic_lock:
+            self._mic_enabled = enabled
+            if not self.is_running:
+                return
+            if enabled and not self._mic_open:
+                self._open_mic()
+            elif not enabled and self._mic_open:
+                self._close_mic()
+
+    def set_mic_device(self, name: str) -> None:
+        """Microfono por nombre ("" = el predeterminado); en plena sesion se reabre al vuelo."""
+        with self._mic_lock:
+            self._mic.device_name = name
+            if self._mic_open:
+                self._close_mic()
+                self._open_mic()
 
     def _open_mic(self) -> None:
         try:
-            self._mic.start()
+            device = self._mic.start()
             self._mic_open = True
         except Exception as exc:
             log.warning("Sin microfono: %s", exc)
             self.warning.emit(f"Microfono no disponible: {exc}")
+            return
+        self.mic_opened.emit(device.name)
+
+    def _close_mic(self) -> None:
+        self._mic.stop()
+        self._mic_open = False
 
     def start(self) -> None:
         if not self.is_ready or self.is_running or self._worker is not None:
@@ -169,8 +185,9 @@ class Pipeline:
         self._t0 = time.monotonic()
         self._index = 0
         self._running.set()
-        if self._mic_enabled:
-            self._open_mic()
+        with self._mic_lock:
+            if self._mic_enabled:
+                self._open_mic()
         self._worker = threading.Thread(target=self._work, name="transcribe", daemon=True)
         self._translating = threading.Thread(target=self._translate, name="translate", daemon=True)
         self._worker.start()
@@ -182,9 +199,9 @@ class Pipeline:
             return
         self._running.clear()
         self._loopback.stop()
-        if self._mic_open:
-            self._mic.stop()
-            self._mic_open = False
+        with self._mic_lock:
+            if self._mic_open:
+                self._close_mic()
         threading.Thread(target=self._finish, name="finish", daemon=True).start()
 
     def _finish(self) -> None:

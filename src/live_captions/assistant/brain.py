@@ -17,13 +17,14 @@ from dataclasses import dataclass, field
 
 from live_captions.assistant.config import LLMConfig
 from live_captions.assistant.detector import looks_like_question
-from live_captions.assistant.llm import ChatClient, LLMError, Message
+from live_captions.assistant.llm import ChatClient, LLMError, Message, pick_vision_model
 from live_captions.events import Signal
 from live_captions.storage import format_clock
 
 log = logging.getLogger(__name__)
 
 TRANSCRIPT_LINES = 40  # ventana de transcripcion que ve el modelo
+DESCRIBE_LINES = 15  # lo que ve el modelo de vision, para relacionar la imagen con la charla
 HISTORY_TURNS = 12  # turnos de chat que se conservan (pares usuario/asistente)
 
 SYSTEM = """\
@@ -44,12 +45,28 @@ reliable context and use it when it is relevant to what is being discussed:
 """
 
 DESCRIBE = """\
-You are helping a Spanish speaker follow a meeting held in English. Read this image carefully \
-and write, in Spanish, everything a text-only assistant would need to use it as context: \
-transcribe any text, numbers, table cells, code and labels exactly; describe charts with their \
-trends and values; describe diagrams, screenshots and UI by their structure. Be exhaustive and \
-literal, do not summarize away details, do not add opinions.
-{note}"""
+You are helping {name}, a Spanish speaker, follow a meeting held in English. They shared this \
+image as reference material. Later, a text-only assistant will answer their questions and \
+suggest what to say using ONLY your reading, so it must be complete and exact.
+
+Write in Spanish, with these sections:
+1. **Qué es**: one line (slide, quiz or exam question, chart, table, code, email, diagram, app \
+screen...).
+2. **Texto**: all readable text, transcribed verbatim in its ORIGINAL language (do not \
+translate it), keeping its structure: headings, bullets, numbered questions, answer options \
+with their letters, table rows as "column: value", code as code.
+3. **Datos clave**: numbers, dates, names, amounts; for charts, each series with its trend and \
+approximate values.
+4. **Estructura**: only what changes the meaning (which option is selected, what is \
+highlighted or crossed out, what connects to what). Skip decoration such as colors, icons or \
+borders.
+5. **Relación con la conversación**: one or two sentences on how it relates to what is being \
+discussed, if it does.
+
+Do not add opinions and do not answer questions that appear in the image.
+{note}
+Recent conversation (oldest first, may be empty):
+{transcript}"""
 
 SUGGEST = """\
 Recent transcript (oldest first, most recent last):
@@ -100,6 +117,9 @@ class Assistant:
     def __init__(self) -> None:
         self.suggestion = Signal()  # (Suggestion)
         self.image_read = Signal()  # (ImageNote ya descrita)
+        self.image_failed = Signal()  # (id de la imagen, motivo)
+        # (modelo nuevo): el de vision configurado ya no existia y se cambio por este.
+        self.vision_model_changed = Signal()
         self.chat_started = Signal()  # (pregunta del usuario)
         self.chat_delta = Signal()  # (trozo de respuesta)
         self.chat_done = Signal()  # (respuesta completa)
@@ -208,8 +228,8 @@ class Assistant:
             ),
         }
 
-    def _transcript_text(self) -> str:
-        lines = list(self._transcript)[-TRANSCRIPT_LINES:]
+    def _transcript_text(self, limit: int = TRANSCRIPT_LINES) -> str:
+        lines = list(self._transcript)[-limit:]
         if not lines:
             return "(empty so far)"
         label = {"them": "Them", "me": "Me"}
@@ -268,18 +288,43 @@ class Assistant:
         if image is None:
             return  # el usuario la quito antes de que se leyera
         self.status.emit("Leyendo la imagen...")
-        note = f"The user says the image is about: {image.note}" if image.note else ""
+        note = f"{self._name()} says the image is about: {image.note}" if image.note else ""
+        prompt = DESCRIBE.format(
+            name=self._name(), note=note, transcript=self._transcript_text(DESCRIBE_LINES)
+        )
         try:
-            image.description = client.describe_image(
-                data_url, DESCRIBE.format(note=note), model=self._config.vision_model
-            )
+            image.description = self._read_image(client, data_url, prompt)
+        except LLMError as exc:
+            self._images.pop(image_id, None)
+            self.image_failed.emit(image_id, str(exc))
+            return
         finally:
             self.status.emit("")
         if not image.description:
             self._images.pop(image_id, None)
-            self.error.emit("El modelo de vision no devolvio nada para la imagen.")
+            self.image_failed.emit(image_id, "El modelo de vision no devolvio nada.")
             return
         self.image_read.emit(image)
+
+    def _read_image(self, client: ChatClient, data_url: str, prompt: str) -> str:
+        """Lee la imagen; si el modelo de vision ya no existe, busca su relevo y reintenta.
+
+        Los proveedores retiran modelos sin aviso (Groq cambio qwen3.6 por qwen3.8), y un 404
+        dejaria las imagenes inservibles hasta que el usuario lo descubriera en Ajustes.
+        """
+        model = self._config.vision_model
+        try:
+            return client.describe_image(data_url, prompt, model=model)
+        except LLMError as exc:
+            if exc.status not in (400, 404) or "model" not in str(exc).lower():
+                raise
+            replacement = pick_vision_model(client.catalog(), model)
+            if not replacement or replacement == model:
+                raise
+            log.warning("Modelo de vision %s no disponible; se usa %s", model, replacement)
+            self._config.vision_model = replacement
+            self.vision_model_changed.emit(replacement)
+            return client.describe_image(data_url, prompt, model=replacement)
 
     def _chat(self, client: ChatClient, question: str) -> None:
         self.chat_started.emit(question)

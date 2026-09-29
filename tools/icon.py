@@ -51,4 +51,3 @@ def render(size: int) -> QImage:
     painter.drawEllipse(QRectF(size * 0.81 - radius, size * 0.19 - radius, radius * 2, radius * 2))
     painter.end()
     return image
-

@@ -12,7 +12,6 @@ const ui = {
   ready: false,
   running: false,
   startedAt: 0,
-  translatedIndex: 0, // ultima frase con traduccion final; los borradores anteriores sobran
   streaming: null, // cuerpo de la respuesta del chat que se esta escribiendo
   pendingImage: null, // data URL de la imagen pegada, a la espera de su nota
   imageCards: new Map(),
@@ -34,7 +33,7 @@ function el(tag, className, text) {
 }
 
 function nearBottom(node) {
-  return node.scrollHeight - node.scrollTop - node.clientHeight < 32;
+  return node.scrollHeight - node.scrollTop - node.clientHeight < 40;
 }
 
 function keepAtBottom(node, update) {
@@ -73,75 +72,160 @@ function setStatus(node, text, error = false) {
   node.classList.toggle("error", Boolean(error));
 }
 
-// -- transcripciones ---------------------------------------------------------------------
+// Palabras como <span>; las que no estaban en la version anterior entran con un fundido.
+function wordSpans(target, words, previous, offset = 0) {
+  words.forEach((word, i) => {
+    if (target.childNodes.length) target.append(" ");
+    target.append(el("span", previous[offset + i] === word ? "" : "fresh", word));
+  });
+}
 
-class Transcript {
-  constructor(name) {
-    this.node = $(name);
-    this.count = $(`count-${name}`);
-    this.copy = document.querySelector(`[data-copy="${name}"]`);
-    this.lines = [];
-    this.partial = null; // <p> de la frase en curso
-    this.words = []; // palabras que muestra ahora el borrador, para animar solo las nuevas
-    this.copy.addEventListener("click", () => copyText(this.lines.join("\n"), this.copy));
-  }
+// -- conversacion ------------------------------------------------------------------------
+//
+// Cada frase final es una fila: hora, ingles y, debajo, su espanol (un borrador atenuado
+// hasta que llega la traduccion final, con el mismo indice). La ultima fila es la frase en
+// curso: el borrador en ingles (confirmado + provisional) y el de su traduccion.
 
-  append(seconds, text, who = "") {
-    this.lines.push(who ? `${who}: ${text}` : text);
-    keepAtBottom(this.node, () => {
-      const line = el("p", who ? "line me" : "line");
-      line.append(el("time", "", clock(seconds)));
-      if (who) line.append(el("span", "who", who));
-      line.append(document.createTextNode(text));
-      this.node.insertBefore(line, this.partial);
+class Conversation {
+  constructor() {
+    this.scroller = $("scroller");
+    this.node = $("lines");
+    this.entries = []; // {seconds, speaker, en, es} para Copiar
+    this.rows = new Map(); // indice -> {es: <p>, entry}
+    this.lastFinal = 0; // indice de la ultima frase final: borradores con indice menor sobran
+    this.draft = null; // {row, en, es, words}
+    this.draftEs = "";
+    this.scroller.addEventListener("scroll", () => this.updateJump());
+    $("jump").addEventListener("click", () => {
+      this.scroller.scrollTo({ top: this.scroller.scrollHeight, behavior: "smooth" });
     });
-    this.count.textContent = String(this.lines.length);
-    this.copy.disabled = false;
+    $("copy-en").addEventListener("click", (e) => copyText(this.text("en"), e.currentTarget));
+    $("copy-es").addEventListener("click", (e) => copyText(this.text("es"), e.currentTarget));
   }
 
-  // Borrador: lo confirmado en gris, lo que aun puede cambiar en cursiva. Las palabras que
-  // no estaban en el borrador anterior entran con un fundido; las demas no se tocan a la vista.
-  setPartial(committed, tentative = "") {
+  update(change) {
+    keepAtBottom(this.scroller, change);
+    this.updateJump();
+  }
+
+  updateJump() {
+    $("jump").hidden = nearBottom(this.scroller);
+  }
+
+  addFinal({ index, seconds, speaker, text }) {
+    const me = speaker === "me";
+    const entry = { seconds, speaker, en: text, es: "" };
+    this.entries.push(entry);
+    this.lastFinal = Math.max(this.lastFinal, index);
+    this.update(() => {
+      $("empty")?.remove();
+      const row = el("article", me ? "row me" : "row");
+      const body = el("div");
+      const en = el("p", "en");
+      if (me) en.append(el("span", "who", "Tú"));
+      en.append(document.createTextNode(text));
+      body.append(en);
+      if (!me) {
+        // Mientras llega la traduccion final se deja el borrador que ya se estaba leyendo.
+        const carried = this.draftEs;
+        const es = el("p", carried ? "es provisional" : "es pending", carried || "…");
+        body.append(es);
+        this.rows.set(index, { es, entry });
+        this.draftEs = "";
+      }
+      row.append(el("time", "", clock(seconds)), body);
+      this.node.insertBefore(row, this.draft?.row ?? null);
+    });
+    $("count").textContent = `${this.entries.length} ${this.entries.length === 1 ? "frase" : "frases"}`;
+    $("copy-en").disabled = false;
+  }
+
+  setTranslation({ index, text }) {
+    const row = this.rows.get(index);
+    if (!row) return;
+    row.es.textContent = text;
+    row.es.className = "es";
+    row.entry.es = text;
+    this.rows.delete(index);
+    $("copy-es").disabled = false;
+  }
+
+  setDraft(committed, tentative) {
     const settled = committed ? committed.split(/\s+/) : [];
     const loose = tentative ? tentative.split(/\s+/) : [];
     const words = [...settled, ...loose];
-    keepAtBottom(this.node, () => {
-      if (!words.length) {
-        this.partial?.remove();
-        this.partial = null;
-        this.words = [];
-        return;
-      }
-      if (!this.partial) {
-        this.partial = el("p", "partial");
-        this.node.append(this.partial);
-      }
+    this.update(() => {
+      if (!words.length) return this.dropDraft();
+      const draft = this.ensureDraft();
       const settledSpan = el("span", "settled");
       const looseSpan = el("span", "tentative");
-      words.forEach((word, i) => {
-        const span = el("span", this.words[i] === word ? "" : "fresh", word);
-        const target = i < settled.length ? settledSpan : looseSpan;
-        if (target.childNodes.length) target.append(" ");
-        target.append(span);
-      });
-      this.partial.replaceChildren(settledSpan);
-      if (loose.length) this.partial.append(settled.length ? " " : "", looseSpan);
-      this.words = words;
+      wordSpans(settledSpan, settled, draft.words);
+      wordSpans(looseSpan, loose, draft.words, settled.length);
+      draft.en.replaceChildren(settledSpan);
+      if (loose.length) draft.en.append(settled.length ? " " : "", looseSpan);
+      draft.words = words;
     });
   }
 
+  setDraftTranslation({ index, text }) {
+    if (index <= this.lastFinal) return; // llego tarde: su frase ya es final
+    this.draftEs = text;
+    if (!this.draft) return;
+    this.update(() => {
+      this.draft.es.textContent = text;
+    });
+  }
+
+  ensureDraft() {
+    if (this.draft) return this.draft;
+    $("empty")?.remove();
+    const row = el("article", "row draft");
+    const en = el("p", "en");
+    const es = el("p", "es", this.draftEs);
+    const body = el("div");
+    body.append(en, es);
+    row.append(el("time", "", "···"), body);
+    this.node.append(row);
+    this.draft = { row, en, es, words: [] };
+    return this.draft;
+  }
+
+  // La frase en curso termino: si acabo en frase final, esta ya se llevo el borrador en
+  // espanol (llega antes que el borrado); si Whisper la descarto, el borrador sobra.
+  dropDraft() {
+    this.draft?.row.remove();
+    this.draft = null;
+    this.draftEs = "";
+  }
+
+  text(language) {
+    return this.entries
+      .filter((e) => language === "en" || e.es)
+      .map((e) => {
+        const who = language === "en" && e.speaker === "me" ? "Tú: " : "";
+        return `[${clock(e.seconds)}] ${who}${language === "en" ? e.en : e.es}`;
+      })
+      .join("\n");
+  }
+
   clear() {
-    this.lines = [];
-    this.partial = null;
-    this.words = [];
+    this.entries = [];
+    this.rows.clear();
+    this.draft = null;
+    this.draftEs = "";
     this.node.replaceChildren();
-    this.count.textContent = "";
-    this.copy.disabled = true;
+    $("count").textContent = "";
+    $("copy-en").disabled = true;
+    $("copy-es").disabled = true;
+    $("jump").hidden = true;
+  }
+
+  restart() {
+    this.lastFinal = 0; // los indices de frase vuelven a empezar en cada sesion
   }
 }
 
-const english = new Transcript("english");
-const spanish = new Transcript("spanish");
+const conversation = new Conversation();
 
 // -- barra superior ----------------------------------------------------------------------
 
@@ -172,29 +256,39 @@ function toggleButton(id, onChange) {
   return (on) => button.setAttribute("aria-pressed", String(on));
 }
 
+const pressed = (id) => $(id).getAttribute("aria-pressed") === "true";
+
 const setMic = toggleButton("mic", (on) => api().set_mic(on));
 const setShowSpanish = toggleButton("show-spanish", () => layoutChanged());
 const setShowAssistant = toggleButton("show-assistant", () => layoutChanged());
 
-// Menu "⋯"
-const menu = $("menu");
-const more = $("more");
-function showMenu(open) {
-  menu.hidden = !open;
-  more.setAttribute("aria-expanded", String(open));
+// Menus desplegables: uno abierto a la vez; se cierran con clic fuera o Escape.
+const menus = [
+  { menu: $("menu"), button: $("more") },
+  { menu: $("mic-menu"), button: $("mic-pick") },
+];
+
+function showMenu(target, open) {
+  for (const { menu, button } of menus) {
+    const show = menu === target && open;
+    menu.hidden = !show;
+    button.setAttribute("aria-expanded", String(show));
+  }
 }
-more.addEventListener("click", (event) => {
-  event.stopPropagation();
-  showMenu(menu.hidden);
-});
+
 document.addEventListener("click", (event) => {
-  if (!menu.hidden && !menu.contains(event.target)) showMenu(false);
+  if (!menus.some(({ menu, button }) => menu.contains(event.target) || button.contains(event.target))) {
+    showMenu(null, false);
+  }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") showMenu(false);
+  if (event.key === "Escape") showMenu(null, false);
 });
-const onTop = menu.querySelector('[data-action="on-top"]');
-menu.addEventListener("click", (event) => {
+
+$("more").addEventListener("click", () => showMenu($("menu"), $("menu").hidden));
+
+const onTop = $("menu").querySelector('[data-action="on-top"]');
+$("menu").addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) return;
   if (action === "on-top") {
@@ -203,73 +297,76 @@ menu.addEventListener("click", (event) => {
     api().set_on_top(on);
     return; // el menu sigue abierto para ver la marca
   }
-  showMenu(false);
-  if (action === "clear") {
-    english.clear();
-    spanish.clear();
-  } else if (action === "folder") {
-    api().open_folder();
-  } else if (action === "settings") {
-    openSettings();
-  }
+  showMenu(null, false);
+  if (action === "clear") conversation.clear();
+  else if (action === "folder") api().open_folder();
+  else if (action === "settings") openSettings();
 });
 
-// -- paneles: visibilidad y anchos -------------------------------------------------------
-
-const panes = $("panes");
-const paneNodes = [...panes.querySelectorAll(".pane")];
-
-function visiblePanes() {
-  return paneNodes.filter((pane) => !pane.hidden);
+// Microfono: la lista se pide a Windows cada vez que se abre (pueden conectar unos cascos).
+async function openMicMenu() {
+  const menu = $("mic-menu");
+  if (!menu.hidden) return showMenu(null, false);
+  const { devices, default: fallback, selected } = await api().list_microphones();
+  const item = (name, label) => {
+    const button = el("button", "", "");
+    button.setAttribute("role", "menuitemradio");
+    button.setAttribute("aria-checked", String(name === selected));
+    button.title = label;
+    button.append(el("span", "check"), el("span", "device", label));
+    button.addEventListener("click", () => {
+      api().set_mic_device(name);
+      $("mic").title = `Microfono: ${label}`;
+      showMenu(null, false);
+    });
+    return button;
+  };
+  menu.replaceChildren(
+    el("div", "menu-title", "Microfono"),
+    item("", fallback ? `Predeterminado de Windows (${fallback})` : "Predeterminado de Windows"),
+  );
+  if (devices.length) menu.append(el("hr"));
+  for (const name of devices) menu.append(item(name, name));
+  if (selected && !devices.includes(selected)) {
+    menu.append(el("div", "backend", `«${selected}» no esta conectado; se usa el predeterminado.`));
+  }
+  showMenu(menu, true);
 }
+$("mic-pick").addEventListener("click", openMicMenu);
 
-// Un separador entre cada par de paneles visibles, recolocados tras mostrar u ocultar.
-function placeSplitters() {
-  panes.querySelectorAll(".splitter").forEach((node) => node.remove());
-  const shown = visiblePanes();
-  shown.slice(1).forEach((pane) => {
-    const splitter = el("div", "splitter");
-    splitter.addEventListener("pointerdown", startDrag);
-    pane.before(splitter);
-  });
-}
+// -- distribucion: espanol intercalado y barra del asistente -----------------------------
 
-function widths() {
-  return paneNodes.map((pane) => Number(pane.style.flexGrow) || 1);
+const layout = $("layout");
+const sidebar = $("assistant");
+
+function sidebarWidth() {
+  return Math.round(sidebar.getBoundingClientRect().width) || null;
 }
 
 function saveLayout() {
-  api().set_layout(
-    $("show-spanish").getAttribute("aria-pressed") === "true",
-    $("show-assistant").getAttribute("aria-pressed") === "true",
-    widths(),
-  );
+  api().set_layout(pressed("show-spanish"), pressed("show-assistant"), sidebarWidth());
+}
+
+function applyLayout() {
+  layout.classList.toggle("no-es", !pressed("show-spanish"));
+  sidebar.hidden = !pressed("show-assistant");
+  $("splitter").hidden = sidebar.hidden;
 }
 
 function layoutChanged() {
-  $("pane-spanish").hidden = $("show-spanish").getAttribute("aria-pressed") !== "true";
-  $("pane-assistant").hidden = $("show-assistant").getAttribute("aria-pressed") !== "true";
-  placeSplitters();
+  applyLayout();
   saveLayout();
 }
 
-function startDrag(event) {
+$("splitter").addEventListener("pointerdown", (event) => {
   const splitter = event.currentTarget;
-  const left = splitter.previousElementSibling;
-  const right = splitter.nextElementSibling;
   const startX = event.clientX;
-  const leftWidth = left.getBoundingClientRect().width;
-  const rightWidth = right.getBoundingClientRect().width;
-  const grow = (Number(left.style.flexGrow) || 1) + (Number(right.style.flexGrow) || 1);
-  const minimum = 220;
+  const startWidth = sidebar.getBoundingClientRect().width;
   splitter.setPointerCapture(event.pointerId);
   splitter.classList.add("dragging");
-
   const move = (e) => {
-    const delta = Math.max(minimum - leftWidth, Math.min(rightWidth - minimum, e.clientX - startX));
-    const share = (leftWidth + delta) / (leftWidth + rightWidth);
-    left.style.flexGrow = (grow * share).toFixed(4);
-    right.style.flexGrow = (grow * (1 - share)).toFixed(4);
+    const width = Math.max(300, Math.min(window.innerWidth * 0.65, startWidth + startX - e.clientX));
+    layout.style.setProperty("--sidebar", `${Math.round(width)}px`);
   };
   const stop = () => {
     splitter.classList.remove("dragging");
@@ -279,7 +376,7 @@ function startDrag(event) {
   };
   splitter.addEventListener("pointermove", move);
   splitter.addEventListener("pointerup", stop);
-}
+});
 
 // -- asistente ---------------------------------------------------------------------------
 
@@ -348,10 +445,6 @@ function assistantFailed() {
   ui.streaming?.classList.remove("streaming");
   ui.streaming = null;
   question.disabled = false;
-  for (const card of ui.imageCards.values()) {
-    const reading = card.querySelector(".reading");
-    if (reading) reading.textContent = "No se pudo leer la imagen.";
-  }
 }
 
 // Imagenes: se pegan (Ctrl+V) o se eligen; se envian con la nota que se escriba despues.
@@ -364,7 +457,10 @@ async function toDataUrl(file) {
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  return canvas.toDataURL("image/jpeg", 0.88);
+  // PNG conserva nitido el texto pequeno (preguntas, tablas, codigo) y las capturas de texto
+  // pesan poco; JPEG solo para fotos grandes, bajo el limite de 4 MB de los proveedores.
+  const png = canvas.toDataURL("image/png");
+  return png.length < 3_000_000 ? png : canvas.toDataURL("image/jpeg", 0.9);
 }
 
 async function setPendingImage(file) {
@@ -386,34 +482,53 @@ function discardImage() {
   question.placeholder = "Pregunta al asistente... (Enter para enviar)";
 }
 
-async function sendImage(dataUrl, note) {
+// `replacing`: la tarjeta de un intento fallido, que se sustituye en su sitio al reintentar.
+async function sendImage(dataUrl, note, replacing = null) {
   const result = await api().send_image(dataUrl, note);
   if (!result.ok) return; // el asistente ya aviso del motivo por `assistant_status`
+  const id = result.id;
   const remove = el("button", "ghost", "Quitar del contexto");
   remove.type = "button";
   const card = el("article", "card user");
-  card.append(cardHead(`Imagen ${result.id}`, { action: remove }));
+  card.append(cardHead(`Imagen ${id}`, { action: remove }));
   const img = el("img");
   img.src = dataUrl;
-  img.alt = note || `Imagen ${result.id}`;
+  img.alt = note || `Imagen ${id}`;
   card.append(img);
   if (note) card.append(el("div", "body", note));
-  card.append(el("div", "dim reading", "Leyendo la imagen..."));
+  const reading = el("div", "dim reading", "Leyendo la imagen...");
+  card.append(reading);
   remove.addEventListener("click", () => {
-    api().remove_image(result.id);
-    ui.imageCards.delete(result.id);
+    api().remove_image(id);
+    ui.imageCards.delete(id);
     card.remove();
   });
-  ui.imageCards.set(result.id, card);
-  addCard(card);
+  ui.imageCards.set(id, { card, reading, dataUrl, note });
+  if (replacing) replacing.replaceWith(card);
+  else addCard(card);
 }
 
+// Lo que leyo el modelo, plegado: es lo que el asistente sabe de la imagen, para comprobarlo.
 function imageRead({ id, description }) {
-  const card = ui.imageCards.get(id);
-  const reading = card?.querySelector(".reading");
-  if (!reading) return;
-  reading.classList.remove("reading");
-  reading.textContent = description;
+  const entry = ui.imageCards.get(id);
+  if (!entry) return;
+  const details = el("details", "reading-done");
+  details.append(el("summary", "", "Lo que entendio el asistente"));
+  details.append(el("div", "body", description.replace(/\*\*/g, "")));
+  entry.reading.replaceWith(details);
+  entry.reading = details;
+}
+
+function imageFailed({ id, reason }) {
+  const entry = ui.imageCards.get(id);
+  if (!entry) return;
+  ui.imageCards.delete(id); // el asistente ya la descarto; reintentar la envia de nuevo
+  const failed = el("div", "image-failed");
+  const retry = el("button", "", "Reintentar");
+  retry.type = "button";
+  retry.addEventListener("click", () => sendImage(entry.dataUrl, entry.note, entry.card));
+  failed.append(el("span", "", `No se pudo leer la imagen: ${reason}`), retry);
+  entry.reading.replaceWith(failed);
 }
 
 $("composer").addEventListener("submit", (event) => {
@@ -474,13 +589,10 @@ const settingsDialog = $("settings");
 const form = $("settings-form");
 const field = (name) => form.elements.namedItem(name);
 const settingsResult = $("settings-result");
+const FIELDS = ["provider", "base_url", "model", "vision_model", "api_key", "user_name", "vocabulary"];
 
 function formValues() {
-  const values = {};
-  for (const name of ["provider", "base_url", "model", "vision_model", "api_key", "user_name", "vocabulary"]) {
-    values[name] = field(name).value.trim();
-  }
-  return values;
+  return Object.fromEntries(FIELDS.map((name) => [name, field(name).value.trim()]));
 }
 
 function showResult(ok, message) {
@@ -488,24 +600,177 @@ function showResult(ok, message) {
   settingsResult.className = `result ${ok ? "ok" : "error"}`;
 }
 
+// Combobox de modelos: se escribe libremente (el proveedor puede tener modelos que no
+// lista) o se elige de la lista, que muestra todo al abrirla y filtra al escribir.
+
+// `vision`: los que aceptan imagenes, o null si el proveedor no lo indica (se ofrecen todos).
+const models = { list: [], vision: null, state: "idle", error: "", request: 0 };
+const comboList = $("combo-list");
+let combo = null; // {input, items, active}
+
+function comboOptions(input) {
+  return input.name === "vision_model" && models.vision ? models.vision : models.list;
+}
+
+function setupCombo(input) {
+  const toggle = el("button", "combo-toggle");
+  toggle.type = "button";
+  toggle.tabIndex = -1;
+  toggle.setAttribute("aria-label", "Ver modelos");
+  input.after(toggle);
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-controls", "combo-list");
+  input.setAttribute("aria-expanded", "false");
+
+  toggle.addEventListener("pointerdown", (event) => event.preventDefault()); // no robar el foco
+  toggle.addEventListener("click", () => {
+    if (combo?.input === input) return closeCombo();
+    input.focus();
+    showCombo(input, "");
+  });
+  input.addEventListener("input", () => showCombo(input, input.value.trim()));
+  input.addEventListener("blur", closeCombo);
+  input.addEventListener("keydown", (event) => {
+    const open = combo?.input === input;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) return showCombo(input, "");
+      moveActive(event.key === "ArrowDown" ? 1 : -1);
+    } else if (event.key === "Enter" && open && combo.active >= 0) {
+      event.preventDefault(); // elige el modelo en vez de enviar el formulario
+      chooseModel(combo.items[combo.active]);
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault(); // cierra la lista, no el dialogo
+      closeCombo();
+    }
+  });
+}
+
+function note(text) {
+  return el("li", "note", text);
+}
+
+function showCombo(input, filter) {
+  const needle = filter.toLowerCase();
+  const options = comboOptions(input);
+  const items = needle ? options.filter((m) => m.toLowerCase().includes(needle)) : options;
+  const current = input.value.trim();
+  combo = { input, items, active: items.indexOf(current) };
+
+  if (models.state === "loading") comboList.replaceChildren(note("Cargando modelos..."));
+  else if (models.state === "error") comboList.replaceChildren(note(models.error));
+  else if (!items.length) comboList.replaceChildren(note(needle ? "Ningun modelo coincide" : "El proveedor no lista modelos"));
+  else {
+    comboList.replaceChildren(
+      ...items.map((model, i) => {
+        const li = el("li");
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", String(model === current));
+        li.title = model;
+        const at = needle ? model.toLowerCase().indexOf(needle) : -1;
+        if (at >= 0) {
+          li.append(model.slice(0, at), el("mark", "", model.slice(at, at + needle.length)), model.slice(at + needle.length));
+        } else {
+          li.textContent = model;
+        }
+        li.addEventListener("pointerdown", (event) => event.preventDefault());
+        li.addEventListener("click", () => chooseModel(model));
+        li.addEventListener("pointermove", () => setActive(i));
+        return li;
+      }),
+    );
+  }
+  input.setAttribute("aria-expanded", "true");
+  comboList.hidden = false;
+  placeCombo();
+  setActive(combo.active);
+}
+
+// Debajo del campo, o encima si abajo no cabe; `fixed` para que el scroll del dialogo no la corte.
+function placeCombo() {
+  const box = combo.input.parentElement.getBoundingClientRect();
+  const below = window.innerHeight - box.bottom - 12;
+  const above = box.top - 12;
+  const upward = below < 200 && above > below;
+  comboList.style.left = `${box.left}px`;
+  comboList.style.width = `${box.width}px`;
+  comboList.style.maxHeight = `${Math.min(280, upward ? above : below)}px`;
+  comboList.style.top = upward ? "" : `${box.bottom + 4}px`;
+  comboList.style.bottom = upward ? `${window.innerHeight - box.top + 4}px` : "";
+}
+
+function setActive(index) {
+  if (!combo) return;
+  combo.active = index;
+  const options = comboList.querySelectorAll('[role="option"]');
+  options.forEach((li, i) => li.classList.toggle("active", i === index));
+  options[index]?.scrollIntoView({ block: "nearest" });
+}
+
+function moveActive(step) {
+  if (!combo?.items.length) return;
+  const count = combo.items.length;
+  setActive(combo.active < 0 ? (step > 0 ? 0 : count - 1) : (combo.active + step + count) % count);
+}
+
+function chooseModel(model) {
+  combo.input.value = model;
+  closeCombo();
+}
+
+function closeCombo() {
+  combo?.input.setAttribute("aria-expanded", "false");
+  combo = null;
+  comboList.hidden = true;
+}
+
+// Pide la lista al proveedor con lo que haya escrito en el dialogo (aunque no se haya guardado).
+async function refreshModels({ report = false } = {}) {
+  const request = ++models.request;
+  models.state = "loading";
+  if (combo) showCombo(combo.input, "");
+  const result = await api().list_models(formValues());
+  if (request !== models.request) return; // llego otra peticion despues (cambio de proveedor)
+  models.list = result.ok ? result.models : [];
+  models.vision = result.ok ? result.vision : null;
+  models.state = result.ok ? "ready" : "error";
+  models.error = result.ok ? "" : `No se pudo cargar la lista: ${result.message}`;
+  if (combo) showCombo(combo.input, "");
+  const current = field("model").value.trim();
+  const vision = field("vision_model").value.trim();
+  if (result.ok && current && models.list.length && !models.list.includes(current)) {
+    showResult(false, `«${current}» ya no esta entre los modelos del proveedor`);
+  } else if (result.ok && vision && models.vision && !models.vision.includes(vision)) {
+    const hint = models.vision.length ? `; prueba ${models.vision[0]}` : "";
+    showResult(false, `«${vision}» no existe o no acepta imagenes${hint}`);
+  } else if (report) {
+    showResult(result.ok, result.message);
+  }
+}
+
+setupCombo(field("model"));
+setupCombo(field("vision_model"));
+window.addEventListener("resize", closeCombo);
+settingsDialog.addEventListener("close", closeCombo);
+$("cancel-settings").addEventListener("click", () => settingsDialog.close("cancel"));
+
 async function openSettings() {
   const data = await api().load_settings();
-  const provider = field("provider");
-  provider.replaceChildren(
+  field("provider").replaceChildren(
     ...Object.entries(data.presets).map(([key, preset]) => {
       const option = el("option", "", preset.label);
       option.value = key;
       return option;
     }),
   );
-  for (const name of ["provider", "base_url", "model", "vision_model", "api_key", "user_name", "vocabulary"]) {
-    field(name).value = data[name] ?? "";
-  }
+  for (const name of FIELDS) field(name).value = data[name] ?? "";
   field("api_key").disabled = data.presets[data.provider]?.needs_key === false;
-  $("models").replaceChildren();
   settingsResult.textContent = "";
   settingsDialog.showModal();
+  refreshModels();
 }
+
+$("open-settings").addEventListener("click", openSettings);
 
 field("provider").addEventListener("change", async (event) => {
   const preset = await api().preset(event.target.value);
@@ -514,8 +779,12 @@ field("provider").addEventListener("change", async (event) => {
   field("vision_model").value = preset.vision_model;
   field("api_key").value = preset.api_key;
   field("api_key").disabled = !preset.needs_key;
-  $("models").replaceChildren();
+  settingsResult.textContent = "";
+  refreshModels();
 });
+
+// Una key recien pegada puede desbloquear la lista.
+field("api_key").addEventListener("change", () => refreshModels());
 
 $("show-key").addEventListener("click", (event) => {
   const shown = field("api_key").type === "text";
@@ -542,27 +811,8 @@ $("test-connection").addEventListener("click", (event) =>
 );
 
 $("load-models").addEventListener("click", (event) =>
-  busy(event.target, "Consultando modelos...", async () => {
-    const result = await api().list_models(formValues());
-    if (!result.ok) return showResult(false, result.message);
-    $("models").replaceChildren(
-      ...result.models.map((model) => {
-        const option = el("option");
-        option.value = model;
-        return option;
-      }),
-    );
-    const current = field("model").value.trim();
-    if (current && !result.models.includes(current)) {
-      showResult(false, `${result.message}; «${current}» ya no esta en la lista`);
-    } else {
-      showResult(true, result.message);
-    }
-    field("model").focus();
-  }),
+  busy(event.target, "Consultando modelos...", () => refreshModels({ report: true })),
 );
-
-$("open-settings").addEventListener("click", openSettings);
 
 // Guardar/Cancelar cierran el dialogo solos (method="dialog"); aqui solo se guarda.
 form.addEventListener("submit", async (event) => {
@@ -576,7 +826,6 @@ const handlers = {
   status: ({ text, error }) => setStatus($("status"), text, error),
   ready(backend) {
     ui.ready = true;
-    record.disabled = ui.running;
     const gpu = backend.startsWith("cuda");
     $("backend").textContent = `${gpu ? "●" : "○"} ${backend}`;
     $("backend").classList.toggle("gpu", gpu);
@@ -588,7 +837,7 @@ const handlers = {
   started({ path }) {
     ui.running = true;
     ui.startedAt = performance.now();
-    ui.translatedIndex = 0; // los indices de frase vuelven a empezar
+    conversation.restart();
     $("clock").textContent = "00:00:00";
     $("clock").title = path;
     renderRecord();
@@ -603,21 +852,16 @@ const handlers = {
   level(rms) {
     $("level").style.width = `${Math.min(100, Math.sqrt(rms) * 130)}%`;
   },
-  partial: ({ committed, tentative }) => english.setPartial(committed, tentative),
-  final({ seconds, speaker, text }) {
-    english.append(seconds, text, speaker === "me" ? "Tú" : "");
+  mic_opened(name) {
+    $("mic").title = `Microfono: ${name}`;
   },
-  translated({ index, seconds, text }) {
-    ui.translatedIndex = Math.max(ui.translatedIndex, index);
-    spanish.setPartial("");
-    spanish.append(seconds, text);
-  },
-  partial_translated({ index, text }) {
-    // Puede llegar tarde, cuando su frase ya tiene traduccion final: entonces sobra.
-    if (index > ui.translatedIndex) spanish.setPartial("", text);
-  },
+  partial: ({ committed, tentative }) => conversation.setDraft(committed, tentative),
+  final: (line) => conversation.addFinal(line),
+  translated: (line) => conversation.setTranslation(line),
+  partial_translated: (draft) => conversation.setDraftTranslation(draft),
   suggestion: addSuggestion,
   image_read: imageRead,
+  image_failed: imageFailed,
   chat_started: chatStarted,
   chat_delta: chatDelta,
   chat_done: chatDone,
@@ -652,15 +896,12 @@ window.addEventListener("pywebviewready", async () => {
   setStatus($("status"), state.status.text, state.status.error);
   if (state.backend) handlers.ready(state.backend);
   setMic(state.mic);
+  if (state.mic_device) $("mic").title = `Microfono: ${state.mic_device}`;
   onTop.setAttribute("aria-checked", String(state.on_top));
   setShowSpanish(state.spanish);
   setShowAssistant(state.assistant);
-  if (Array.isArray(state.widths) && state.widths.length === paneNodes.length) {
-    paneNodes.forEach((pane, i) => (pane.style.flexGrow = String(state.widths[i])));
-  }
-  $("pane-spanish").hidden = !state.spanish;
-  $("pane-assistant").hidden = !state.assistant;
-  placeSplitters();
+  if (state.sidebar_width) layout.style.setProperty("--sidebar", `${state.sidebar_width}px`);
+  applyLayout();
   $("context").value = state.context;
   renderAssistantConfig(state.assistant_config);
 });

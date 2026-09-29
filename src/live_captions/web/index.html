@@ -13,17 +13,22 @@
     <div class="meter" title="Nivel del audio del escritorio"><div id="level"></div></div>
     <div id="clock" class="clock">00:00:00</div>
     <div class="toggles">
-      <button class="toggle" id="show-spanish" aria-pressed="true" title="Mostrar u ocultar la traduccion">Español</button>
+      <button class="toggle" id="show-spanish" aria-pressed="true" title="Mostrar u ocultar la traduccion bajo cada frase">Español</button>
+      <div class="split" id="mic-split">
+        <button class="toggle" id="mic" aria-pressed="true" title="Transcribir tambien lo que dices tu (Tú)">Mic</button>
+        <button class="toggle caret" id="mic-pick" aria-haspopup="menu" aria-expanded="false" title="Elegir microfono">▾</button>
+        <div id="mic-menu" class="menu" role="menu" hidden></div>
+      </div>
       <button class="toggle" id="show-assistant" aria-pressed="true" title="Mostrar u ocultar el asistente">Asistente</button>
-      <button class="toggle" id="mic" aria-pressed="true" title="Transcribir tambien lo que dices tu (Tú)">Mic</button>
     </div>
     <div class="more">
       <button id="more" class="icon" aria-haspopup="menu" aria-expanded="false" title="Mas">⋯</button>
       <div id="menu" class="menu" role="menu" hidden>
-        <button role="menuitem" data-action="clear">Limpiar transcripcion</button>
+        <button role="menuitem" data-action="clear">Limpiar conversacion</button>
         <button role="menuitem" data-action="folder">Abrir carpeta de sesiones</button>
         <hr>
-        <button role="menuitemcheckbox" data-action="on-top" aria-checked="false"><span class="check"></span>Siempre encima</button>
+        <button role="menuitemcheckbox" data-action="on-top" aria-checked="false"
+          title="La ventana queda por delante de Teams, Zoom o Meet aunque hagas clic en ellos. Util con la ventana pequena en una esquina."><span class="check"></span>Mantener sobre otras ventanas</button>
         <button role="menuitem" data-action="settings">Ajustes...</button>
         <hr>
         <div id="backend" class="backend">cargando modelos...</div>
@@ -31,26 +36,24 @@
     </div>
   </header>
 
-  <main id="panes" class="panes">
-    <section class="pane" id="pane-english" data-pane="english">
+  <main class="layout" id="layout">
+    <section class="pane conversation">
       <header class="pane-head">
-        <h2>English</h2><span class="count" id="count-english"></span>
-        <button class="ghost copy" data-copy="english" disabled>Copiar</button>
+        <h2>Conversación</h2><span class="count" id="count"></span>
+        <button class="ghost" id="copy-en" disabled>Copiar inglés</button>
+        <button class="ghost" id="copy-es" disabled>Copiar español</button>
       </header>
-      <div class="transcript" id="english" data-empty="Lo que se oiga en el escritorio aparecera aqui."></div>
+      <div class="scroller" id="scroller">
+        <div class="lines" id="lines">
+          <p class="empty" id="empty">Lo que se oiga en el escritorio aparecera aqui, cada frase con su traduccion debajo.</p>
+        </div>
+      </div>
+      <button class="jump" id="jump" hidden>↓ Ir al final</button>
     </section>
 
+    <div class="splitter" id="splitter" title="Arrastra para cambiar el ancho del asistente"></div>
 
-    <section class="pane" id="pane-spanish" data-pane="spanish">
-      <header class="pane-head">
-        <h2>Español</h2><span class="count" id="count-spanish"></span>
-        <button class="ghost copy" data-copy="spanish" disabled>Copiar</button>
-      </header>
-      <div class="transcript" id="spanish" data-empty="Traduccion de cada frase, mientras se habla."></div>
-    </section>
-
-
-    <section class="pane assistant" id="pane-assistant" data-pane="assistant">
+    <aside class="pane assistant" id="assistant">
       <header class="pane-head">
         <h2>Asistente</h2><span class="badge" id="assistant-badge"></span>
         <button class="ghost" id="clear-feed" title="Vacia las tarjetas y quita las imagenes del contexto">Limpiar</button>
@@ -75,7 +78,7 @@
         <button type="button" id="attach" title="Adjunta una imagen (o pega una captura con Ctrl+V en el campo)">Imagen</button>
         <button type="submit">Enviar</button>
       </form>
-    </section>
+    </aside>
   </main>
 
   <dialog id="settings" class="settings">
@@ -86,13 +89,17 @@
         <label>Proveedor <select name="provider"></select></label>
         <label>URL base <input name="base_url" spellcheck="false"></label>
         <label>Modelo
-          <span class="row"><input name="model" list="models" spellcheck="false"><button type="button" class="ghost" id="load-models">Cargar modelos</button></span>
+          <span class="row">
+            <span class="combo"><input name="model" spellcheck="false" autocomplete="off"></span>
+            <button type="button" class="ghost" id="load-models" title="Vuelve a pedir la lista al proveedor">Actualizar</button>
+          </span>
         </label>
-        <label>Modelo con vision <input name="vision_model" list="models" spellcheck="false" placeholder="Vacio = sin imagenes en el chat"></label>
+        <label>Modelo con vision
+          <span class="combo"><input name="vision_model" spellcheck="false" autocomplete="off" placeholder="Vacio = sin imagenes en el chat"></span>
+        </label>
         <label>API key
-          <span class="row"><input name="api_key" type="password" spellcheck="false" placeholder="Se guarda en el Administrador de credenciales de Windows"><button type="button" class="ghost" id="show-key" aria-pressed="false">Mostrar</button></span>
+          <span class="row"><input name="api_key" type="password" spellcheck="false" placeholder="Se guarda en el Administrador de credenciales de Windows"><button type="button" class="ghost" id="show-key">Mostrar</button></span>
         </label>
-        <datalist id="models"></datalist>
         <p class="hint">Groq, Cerebras, NVIDIA y OpenRouter tienen niveles gratuitos; la key se crea en su web.
           «Local» apunta a un llama-server en tu PC y no necesita key.</p>
       </fieldset>
@@ -106,10 +113,12 @@
       <footer>
         <button type="button" id="test-connection">Probar conexion</button>
         <span class="result" id="settings-result"></span>
-        <button value="cancel" formnovalidate>Cancelar</button>
+        <button type="button" id="cancel-settings">Cancelar</button>
         <button value="save" class="primary">Guardar</button>
       </footer>
     </form>
+    <!-- Dentro del dialogo: lo que queda fuera de un modal no se ve encima ni recibe clics. -->
+    <ul id="combo-list" class="combo-list" role="listbox" hidden></ul>
   </dialog>
 
   <script src="app.js"></script>

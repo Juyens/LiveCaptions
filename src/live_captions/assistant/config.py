@@ -31,7 +31,7 @@ PRESETS: dict[str, Preset] = {
         "Groq",
         "https://api.groq.com/openai/v1",
         "openai/gpt-oss-120b",
-        vision_model="qwen/qwen3.6-27b",
+        vision_model="qwen/qwen3.8-27b",
     ),
     "cerebras": Preset("Cerebras", "https://api.cerebras.ai/v1", "gpt-oss-120b"),
     "nvidia": Preset(
@@ -49,6 +49,7 @@ RETIRED: dict[str, str] = {
     "llama-3.3-70b-versatile": "openai/gpt-oss-120b",  # Groq, 2026-08-16
     "llama-3.1-8b-instant": "openai/gpt-oss-20b",  # Groq, 2026-08-16
     "llama-3.3-70b": "gpt-oss-120b",  # Cerebras
+    "qwen/qwen3.6-27b": "qwen/qwen3.8-27b",  # Groq, vision; 404 desde 2026-09
 }
 
 
@@ -101,7 +102,9 @@ def load(settings: Settings) -> LLMConfig:
         base_url=str(settings.get("llm/base_url", default.base_url)),
         model=RETIRED.get(model := str(settings.get("llm/model", default.model)), model),
         user_name=str(settings.get("llm/user_name", "")),
-        vision_model=str(settings.get("llm/vision_model", default.vision_model)),
+        vision_model=RETIRED.get(
+            vision := str(settings.get("llm/vision_model", default.vision_model)), vision
+        ),
         vocabulary=str(settings.get("transcription/vocabulary", "")),
     )
 

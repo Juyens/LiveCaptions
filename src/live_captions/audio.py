@@ -66,6 +66,48 @@ def default_microphone(audio: pa.PyAudio) -> Device:
     return _as_device(audio.get_device_info_by_index(index))
 
 
+def microphones(audio: pa.PyAudio) -> list[Device]:
+    """Entradas WASAPI reales (sin los loopback de las salidas), en el orden de Windows."""
+    wasapi = audio.get_host_api_info_by_type(pa.paWASAPI)
+    found = []
+    for index in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(index)
+        if (
+            info["hostApi"] == wasapi["index"]
+            and int(info["maxInputChannels"]) > 0
+            and not info.get("isLoopbackDevice", False)
+        ):
+            found.append(_as_device(info))
+    return found
+
+
+def list_microphones() -> tuple[list[str], str]:
+    """(nombres de los microfonos, nombre del predeterminado) para ofrecerlos al usuario."""
+    audio = pa.PyAudio()
+    try:
+        names = [device.name for device in microphones(audio)]
+        try:
+            default = default_microphone(audio).name
+        except RuntimeError:
+            default = ""
+        return names, default
+    finally:
+        audio.terminate()
+
+
+def pick_microphone(audio: pa.PyAudio, name: str) -> Device:
+    """El microfono con ese nombre; el predeterminado si `name` esta vacio o ya no existe.
+
+    Se elige por nombre y no por indice: Windows renumera los dispositivos cada vez que se
+    conecta o desconecta uno (unos auriculares, una webcam).
+    """
+    if name:
+        for device in microphones(audio):
+            if device.name == name:
+                return device
+    return default_microphone(audio)
+
+
 class Capture:
     """Abre una fuente y entrega bloques float32 mono a 16 kHz al callback.
 
@@ -80,6 +122,7 @@ class Capture:
         self._resampler: soxr.ResampleStream | None = None
         self._channels = 2
         self._lock = threading.Lock()
+        self.device_name = ""  # solo microfono: "" = el predeterminado de Windows
 
     def start(self) -> Device:
         with self._lock:
@@ -87,8 +130,10 @@ class Capture:
                 raise RuntimeError("La captura ya esta en marcha")
             self._audio = pa.PyAudio()
             try:
-                pick = default_loopback if self._source == "loopback" else default_microphone
-                device = pick(self._audio)
+                if self._source == "loopback":
+                    device = default_loopback(self._audio)
+                else:
+                    device = pick_microphone(self._audio, self.device_name)
                 self._channels = device.channels
                 self._resampler = soxr.ResampleStream(
                     device.rate, TARGET_RATE, num_channels=1, dtype="float32"
