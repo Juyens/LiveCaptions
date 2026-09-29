@@ -260,17 +260,13 @@ const pressed = (id) => $(id).getAttribute("aria-pressed") === "true";
 
 const setMic = toggleButton("mic", (on) => api().set_mic(on));
 const setShowSpanish = toggleButton("show-spanish", () => layoutChanged());
-// El boton Asistente no es un simple interruptor: en ventana ancha fija o quita la barra (y
-// se recuerda); en estrecha abre o cierra el panel superpuesto (y no se recuerda).
-$("show-assistant").addEventListener("click", () => {
-  if (narrow.matches) {
-    ui.overlayOpen = !ui.overlayOpen;
-    applyLayout();
-  } else {
-    ui.showAssistant = !ui.showAssistant;
-    layoutChanged();
-  }
-});
+// Un solo estado para el asistente, sea cual sea el tamano: activo sigue activo al agrandar o
+// achicar la ventana; lo que cambia es solo si va al lado o encima de la conversacion.
+function setAssistant(on) {
+  ui.showAssistant = on;
+  layoutChanged();
+}
+$("show-assistant").addEventListener("click", () => setAssistant(!ui.showAssistant));
 
 // Menus desplegables: uno abierto a la vez; se cierran con clic fuera o Escape.
 const menus = [
@@ -294,10 +290,8 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   showMenu(null, false);
-  if (narrow.matches && ui.overlayOpen && !settingsDialog.open) {
-    ui.overlayOpen = false;
-    applyLayout();
-  }
+  // Superpuesto tapa la conversacion: Escape lo cierra (igual que su X).
+  if (narrow.matches && ui.showAssistant && !settingsDialog.open) setAssistant(false);
 });
 
 $("more").addEventListener("click", () => showMenu($("menu"), $("menu").hidden));
@@ -353,14 +347,15 @@ $("mic-pick").addEventListener("click", openMicMenu);
 
 const layout = $("layout");
 const sidebar = $("assistant");
-// Por debajo de este ancho no caben conversacion y asistente lado a lado.
-const narrow = window.matchMedia("(max-width: 880px)");
-ui.showAssistant = true; // en ventana ancha: barra fija o no (se guarda)
-ui.overlayOpen = false; // en ventana estrecha: panel superpuesto abierto o no
+// Por debajo de este ancho no caben lado a lado la conversacion (320 px) y el asistente
+// (280 px): el CSS lo pone encima (misma cifra en app.css). Aqui solo decide si Escape lo
+// cierra, porque encima tapa la conversacion.
+const narrow = window.matchMedia("(max-width: 660px)");
+ui.showAssistant = true; // activo o no, en cualquier tamano (se guarda)
 ui.sidebarWidth = null; // ancho elegido arrastrando, en px
 
 function assistantVisible() {
-  return narrow.matches ? ui.overlayOpen : ui.showAssistant;
+  return ui.showAssistant;
 }
 
 function saveLayout() {
@@ -371,7 +366,6 @@ function applyLayout() {
   const visible = assistantVisible();
   const opening = visible && sidebar.hidden;
   layout.classList.toggle("no-es", !pressed("show-spanish"));
-  layout.classList.toggle("narrow", narrow.matches);
   sidebar.hidden = !visible;
   $("splitter").hidden = !visible;
   $("show-assistant").setAttribute("aria-pressed", String(visible));
@@ -385,15 +379,7 @@ function layoutChanged() {
   saveLayout();
 }
 
-narrow.addEventListener("change", () => {
-  ui.overlayOpen = false; // al estrechar la ventana, el panel no aparece de golpe encima
-  applyLayout();
-});
-
-$("close-assistant").addEventListener("click", () => {
-  ui.overlayOpen = false;
-  applyLayout();
-});
+$("close-assistant").addEventListener("click", () => setAssistant(false));
 
 // Una sugerencia con el asistente cerrado deja un punto en su boton.
 function notifyAssistant() {

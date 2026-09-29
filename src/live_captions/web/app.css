@@ -170,7 +170,7 @@ button.primary:hover { background: #fff; }
 .pane-head .count, .pane-head .badge { flex: 1; }
 
 /* Conversacion: cada frase en ingles con su espanol debajo, en una columna de lectura. */
-.conversation { flex: 1 1 auto; position: relative; min-width: 360px; }
+.conversation { flex: 1 1 auto; position: relative; min-width: 320px; }
 .scroller { flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
 .lines { max-width: 920px; margin: 0 auto; padding: 14px 24px 28px; }
 .empty { color: var(--text-faint); margin: 24px 0 0 76px; }
@@ -220,21 +220,26 @@ button.primary:hover { background: #fff; }
 .conversation { container-type: inline-size; }
 .close-assistant { display: none; }
 
-/* Ventana estrecha: la conversacion ocupa todo y el asistente se abre encima, como un panel. */
-.layout.narrow { position: relative; }
-.layout.narrow .conversation { min-width: 0; }
-.layout.narrow .splitter { display: none; }
-.layout.narrow .assistant {
-  position: absolute;
-  top: 0; right: 0; bottom: 0;
-  z-index: 5;
-  width: min(420px, 100%);
-  max-width: none;
-  min-width: 0;
-  box-shadow: -18px 0 44px rgba(0, 0, 0, .75);
-  animation: slide-in .18s ease-out;
+/* Menos de 660 px (no caben 320 + 280): la conversacion ocupa todo y el asistente activo va
+   encima, como un panel con su X. Media query y no clase puesta por JS: el evento de cambio
+   de tamano puede llegar tarde y el diseno quedaria un paso por detras de la ventana.
+   El mismo ancho que `narrow` en app.js. */
+@media (max-width: 660px) {
+  .layout { position: relative; }
+  .layout .conversation { min-width: 0; }
+  .layout .splitter { display: none; }
+  .layout .assistant {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    z-index: 5;
+    width: min(420px, 100%);
+    max-width: none;
+    min-width: 0;
+    box-shadow: -18px 0 44px rgba(0, 0, 0, .75);
+    animation: slide-in .18s ease-out;
+  }
+  .layout .close-assistant { display: inline-block; font-size: 15px; line-height: 1; padding: 4px 8px; }
 }
-.layout.narrow .close-assistant { display: inline-block; font-size: 15px; line-height: 1; padding: 4px 8px; }
 @keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
 
 /* Aviso de sugerencia nueva con el asistente cerrado. */

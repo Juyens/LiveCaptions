@@ -41,7 +41,10 @@ microphone is on, are marked `Tú`. Scroll up to reread something and the view s
 language with its timestamps.
 
 **The assistant** is a sidebar, as wide as you drag it: suggested answers when a question is
-aimed at you, plus a chat for anything else about the conversation.
+aimed at you, plus a chat for anything else about the conversation. Whether it is shown is one
+setting whatever the window size: it sits next to the conversation down to 660 px wide and
+over it below that, with an X (or Escape) to close it. A suggestion that arrives while it is
+closed puts a green dot on its button.
 
 The toolbar has the **Escuchar / Detener** button, the status line, an audio level, a clock,
 toggles for the Spanish lines, the microphone and the assistant, and a `⋯` menu with clear,
