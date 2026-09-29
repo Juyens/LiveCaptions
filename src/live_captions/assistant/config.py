@@ -58,6 +58,12 @@ class LLMConfig:
     model: str = PRESETS["groq"].model
     user_name: str = ""
     vision_model: str = PRESETS["groq"].vision_model
+    vocabulary: str = ""  # nombres y terminos de las reuniones, pista para Whisper
+
+    @property
+    def hotwords(self) -> str:
+        """Pista para Whisper: el nombre del usuario y su vocabulario."""
+        return ", ".join(part for part in (self.user_name, self.vocabulary) if part)
 
     @property
     def needs_key(self) -> bool:
@@ -95,6 +101,7 @@ def load(settings: QSettings) -> LLMConfig:
         model=RETIRED.get(model := str(settings.value("llm/model", default.model)), model),
         user_name=str(settings.value("llm/user_name", "")),
         vision_model=str(settings.value("llm/vision_model", default.vision_model)),
+        vocabulary=str(settings.value("transcription/vocabulary", "")),
     )
 
 
@@ -104,3 +111,4 @@ def save(settings: QSettings, config: LLMConfig) -> None:
     settings.setValue("llm/model", config.model)
     settings.setValue("llm/user_name", config.user_name)
     settings.setValue("llm/vision_model", config.vision_model)
+    settings.setValue("transcription/vocabulary", config.vocabulary)

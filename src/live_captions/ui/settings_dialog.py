@@ -1,4 +1,4 @@
-"""Dialogo de ajustes del asistente: proveedor, modelo, API key y nombre del usuario."""
+"""Dialogo de ajustes: proveedor, modelo, API key, nombre del usuario y vocabulario."""
 
 from __future__ import annotations
 
@@ -77,6 +77,12 @@ class SettingsDialog(QDialog):
             "Cualquiera de estas palabras en la transcripcion cuenta como que te nombran "
             "(sin distinguir mayusculas ni tildes)."
         )
+        self._vocabulary = QLineEdit(config.vocabulary)
+        self._vocabulary.setPlaceholderText("Postgres, Kubernetes, Acme Corp, ...")
+        self._vocabulary.setToolTip(
+            "Nombres, productos y siglas que se dicen en tus reuniones. Whisper los recibe "
+            "como pista, igual que tu nombre, y los reconoce mejor."
+        )
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -88,6 +94,7 @@ class SettingsDialog(QDialog):
         form.addRow("Modelo con vision", self._vision)
         form.addRow("API key", key_row)
         form.addRow("Tu nombre", self._name)
+        form.addRow("Vocabulario", self._vocabulary)
 
         hint = QLabel(
             "Groq, Cerebras, NVIDIA y OpenRouter tienen niveles gratuitos; la key se crea en su "
@@ -139,6 +146,7 @@ class SettingsDialog(QDialog):
             model=self._model.currentText().strip(),
             user_name=self._name.text().strip(),
             vision_model=self._vision.currentText().strip(),
+            vocabulary=self._vocabulary.text().strip(),
         )
 
     def api_key(self) -> str:

@@ -9,7 +9,7 @@
 [![PySide6](https://img.shields.io/badge/PySide6-6.11-41cd52?style=flat-square)](https://doc.qt.io/qtforpython-6/)
 [![CUDA](https://img.shields.io/badge/CUDA-12-76b900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078d4?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-26%20passing-0cce6b?style=flat-square)](#building-from-source)
+[![Tests](https://img.shields.io/badge/tests-36%20passing-0cce6b?style=flat-square)](#building-from-source)
 
 <img src="docs/captura.png" width="820" alt="Live Captions during a meeting: English transcript, Spanish translation and a suggested answer">
 
@@ -35,8 +35,8 @@ Three panels, each of which can be hidden from the toolbar:
 
 | Panel | What it shows |
 | :--- | :--- |
-| **English** | The live transcript. A grey draft appears while the person is still talking and is replaced by the final sentence when they pause. Your own words, if the microphone is on, are marked `Tú`. |
-| **Español** | Every sentence the others said, translated a couple of seconds later. |
+| **English** | The live transcript. A draft grows word by word while the person is still talking — light grey once a word is settled, italic while it may still change — and is replaced by the final sentence when they pause. Your own words, if the microphone is on, are marked `Tú`. |
+| **Español** | Every sentence the others said, translated. The settled part of the draft is translated too, so the Spanish moves along before the sentence ends. |
 | **Asistente** | Suggested answers when a question is aimed at you, plus a chat for anything else about the conversation. |
 
 The toolbar has the **Escuchar / Detener** button, the status line, an audio level, a clock,
@@ -55,19 +55,35 @@ capture, optional, takes the microphone so the assistant knows what you answered
 
 Both streams go through the same path: resampled to 16 kHz, split into sentences by Silero
 VAD (0.6 s of silence closes one; 15 s forces a cut at the last pause), transcribed by Whisper.
-Only one thread touches the GPU, so the two sources never fight over it.
+Only one thread touches the GPU, so the two sources never fight over it, and a finished
+sentence always goes before a draft.
 
 ```
 loopback ─┐
           ├─> 16 kHz ─> Silero VAD ─> sentence ─> Whisper large-v3-turbo ─> English panel + .en.md
 mic ──────┘                 │                            │
-                            └── draft every ~1 s ────────┤──> opus-mt ──> Spanish panel + .es.md
+                            └── draft every ~0.3 s ──────┤──> opus-mt ──> Spanish panel + .es.md
                                                          └──> question filter ──> LLM ──> answers
 ```
 
-Measured on an RTX 4060 Laptop: about **0.3 s** to transcribe a sentence and under **0.25 s**
-to translate it. Whisper's usual inventions over silence ("Thank you for watching") are
-filtered out.
+**Drafts.** Whisper's encoder always reads a 30 s window, even for a two-second sentence, and
+that is almost all of its cost. A final sentence gets the full window and beam search (~0.3 s);
+a draft gets only the window it needs, 10 s at least, which takes ~65 ms. Each draft is
+compared with the previous one and the words both agree on are settled (LocalAgreement), so
+the text grows at the right instead of flickering.
+
+**Context.** Each final sentence is transcribed with what was said just before it and with
+your name and the vocabulary from the settings (product names, acronyms, people), which
+keeps names, casing and punctuation consistent. Whisper's usual inventions over silence
+("Thank you for watching") are filtered out.
+
+Measured on an RTX 4060 Laptop, replaying a recorded meeting with `tools/replay.py`:
+
+| From | To | Median |
+| :--- | :--- | ---: |
+| someone starts talking | first English words | 0.46 s |
+| they pause | final English sentence | 1.08 s |
+| they pause | final Spanish sentence | 1.18 s |
 
 ## The assistant
 
@@ -140,7 +156,8 @@ NVIDIA driver is enough — the CUDA DLLs come with the wheels.
 ```bash
 uv sync
 uv run python -m live_captions      # run it
-uv run pytest                       # 26 tests: sentence splitting, storage, detector, client
+uv run pytest                       # 36 tests: sentence splitting, drafts, storage, detector, client
+uv run python tools/replay.py meeting.wav --reference meeting.txt   # latency and WER
 uv run python tools/build.py        # dist/LiveCaptions/, then copied to ~/Documents/DevTools/LiveCaptions
 ```
 

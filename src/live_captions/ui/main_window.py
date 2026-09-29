@@ -52,7 +52,7 @@ class TranscriptPane(QFrame):
         super().__init__()
         self.setObjectName("card")
         self._lines: list[str] = []
-        self._partial = ""
+        self._partial: tuple[str, str] = ("", "")  # (confirmado, provisional)
         self._final_end = 0
 
         self._title = QLabel(title)
@@ -110,11 +110,12 @@ class TranscriptPane(QFrame):
         if at_bottom:
             self._scroll_to_bottom()
 
-    def set_partial(self, text: str) -> None:
-        if text == self._partial:
+    def set_partial(self, committed: str, tentative: str = "") -> None:
+        """Frase en curso: lo confirmado en gris claro, lo que aun puede cambiar en cursiva."""
+        if (committed, tentative) == self._partial:
             return
         at_bottom = self._at_bottom()
-        self._partial = text
+        self._partial = (committed, tentative)
         self._drop_partial()
         self._render_partial()
         if at_bottom:
@@ -122,7 +123,7 @@ class TranscriptPane(QFrame):
 
     def clear(self) -> None:
         self._lines.clear()
-        self._partial = ""
+        self._partial = ("", "")
         self._final_end = 0
         self._edit.clear()
         self._count.setText("")
@@ -156,12 +157,18 @@ class TranscriptPane(QFrame):
         cursor.removeSelectedText()
 
     def _render_partial(self) -> None:
-        if not self._partial:
+        committed, tentative = self._partial
+        if not committed and not tentative:
             return
         cursor = self._cursor_at_end(new_block=self._final_end > 0)
-        cursor.insertHtml(
-            f'<span style="color:{theme.TEXT_FAINT}"><i>{html.escape(self._partial)}</i></span>'
-        )
+        parts = []
+        if committed:
+            parts.append(f'<span style="color:{theme.TEXT_DIM}">{html.escape(committed)}</span>')
+        if tentative:
+            parts.append(
+                f'<span style="color:{theme.TEXT_FAINT}"><i>{html.escape(tentative)}</i></span>'
+            )
+        cursor.insertHtml(" ".join(parts))
 
     def _at_bottom(self) -> bool:
         bar = self._edit.verticalScrollBar()
@@ -193,6 +200,8 @@ class MainWindow(QWidget):
         self._pipeline.partial.connect(self._on_partial)
         self._pipeline.final.connect(self._on_final)
         self._pipeline.translated.connect(self._on_translated)
+        self._pipeline.partial_translated.connect(self._on_partial_translated)
+        self._translated_index = 0
 
         self._assistant = Assistant(self)
         self._assistant.suggestion.connect(self._on_suggestion)
@@ -368,6 +377,7 @@ class MainWindow(QWidget):
         self._configure_assistant(config)
 
     def _configure_assistant(self, config: llm_config.LLMConfig) -> None:
+        self._pipeline.set_hotwords(config.hotwords)
         self._assistant.configure(config)
         self._assistant.set_context(self._assistant_pane.context())
         if self._assistant.is_configured:
@@ -400,6 +410,7 @@ class MainWindow(QWidget):
 
     def _on_started(self, device: str, path: str) -> None:
         self._elapsed = 0
+        self._translated_index = 0  # los indices de frase vuelven a empezar
         self._clock.setText("00:00:00")
         self._clock.setProperty("live", True)
         _repolish(self._clock)
@@ -427,15 +438,22 @@ class MainWindow(QWidget):
     def _on_level(self, rms: float) -> None:
         self._level.setValue(min(100, int((rms**0.5) * 130)))
 
-    def _on_partial(self, text: str) -> None:
-        self._english.set_partial(text)
+    def _on_partial(self, committed: str, tentative: str) -> None:
+        self._english.set_partial(committed, tentative)
 
     def _on_final(self, _index: int, seconds: float, speaker: str, text: str) -> None:
         self._english.append_line(seconds, text, tag="Tú" if speaker == "me" else "")
         self._assistant.on_line(speaker, seconds, text)
 
-    def _on_translated(self, _index: int, seconds: float, text: str) -> None:
+    def _on_translated(self, index: int, seconds: float, text: str) -> None:
+        self._translated_index = max(self._translated_index, index)
+        self._spanish.set_partial("")
         self._spanish.append_line(seconds, text)
+
+    def _on_partial_translated(self, index: int, text: str) -> None:
+        # Puede llegar tarde, cuando su frase ya tiene traduccion final: entonces sobra.
+        if index > self._translated_index:
+            self._spanish.set_partial("", text)
 
     # -- senales del asistente ---------------------------------------------------------
 

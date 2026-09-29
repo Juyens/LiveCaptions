@@ -84,3 +84,38 @@ def test_flush_returns_the_open_sentence_and_resets() -> None:
     assert abs(tail.size / RATE - 1.0) < 0.01
     assert seg.flush() is None
     assert seg.pending() is None
+
+
+def test_no_ghost_segment_from_the_tail_of_the_previous_sentence() -> None:
+    # Antes el buffer se quedaba con los ultimos 0.15 s de voz de la frase emitida; el VAD los
+    # volvia a ver como voz y salia un segmento fantasma que Whisper convertia en "you".
+    seg = Segmenter(fake_regions, silence_s=0.6)
+    audio = np.concatenate([speech(2.0), silence(1.5), speech(2.0), silence(1.5)])
+    out = feed_all(seg, audio)
+    assert len(out) == 2
+    assert all(s.size / RATE > 2.0 for s in out)
+
+
+def test_min_speech_counts_voice_not_padding() -> None:
+    # 0.2 s de voz mas 0.15 s de margen a cada lado superan 0.3 s, pero la voz no.
+    seg = Segmenter(fake_regions, min_speech_s=0.3, pad_s=0.15)
+    out = feed_all(seg, np.concatenate([silence(0.5), speech(0.2), silence(1.0)]))
+    assert out == []
+
+
+def test_pending_covers_the_open_sentence() -> None:
+    seg = Segmenter(fake_regions, pad_s=0.0)
+    feed_all(seg, np.concatenate([silence(0.4), speech(1.0)]))
+    pending = seg.pending()
+    assert pending is not None
+    assert abs(pending.size / RATE - 1.0) < 0.21
+
+
+def test_a_late_burst_of_audio_still_closes_the_sentence_inside_it() -> None:
+    # Si el hilo de trabajo se atasca, el audio acumulado llega de golpe. La pausa que hay
+    # dentro del bloque tiene que cerrar la frase igual que si hubiera llegado poco a poco.
+    seg = Segmenter(fake_regions, silence_s=0.6, pad_s=0.0)
+    out = seg.feed(np.concatenate([speech(2.0), silence(1.5), speech(1.0)]))
+    assert len(out) == 1
+    assert abs(out[0].size / RATE - 2.0) < 0.01
+    assert seg.pending() is not None
