@@ -40,8 +40,8 @@
     <section class="pane conversation">
       <header class="pane-head">
         <h2>Conversación</h2><span class="count" id="count"></span>
-        <button class="ghost" id="copy-en" disabled>Copiar inglés</button>
-        <button class="ghost" id="copy-es" disabled>Copiar español</button>
+        <button class="ghost" id="copy-en" disabled title="Copiar la conversacion en ingles"><span class="long">Copiar inglés</span><span class="short">EN</span></button>
+        <button class="ghost" id="copy-es" disabled title="Copiar la traduccion"><span class="long">Copiar español</span><span class="short">ES</span></button>
       </header>
       <div class="scroller" id="scroller">
         <div class="lines" id="lines">
@@ -58,6 +58,7 @@
         <h2>Asistente</h2><span class="badge" id="assistant-badge"></span>
         <button class="ghost" id="clear-feed" title="Vacia las tarjetas y quita las imagenes del contexto">Limpiar</button>
         <button class="ghost" id="open-settings">Ajustes</button>
+        <button class="ghost close-assistant" id="close-assistant" title="Cerrar (Esc)" aria-label="Cerrar el asistente">✕</button>
       </header>
       <textarea id="context" class="context" rows="3" spellcheck="false"
         placeholder="Contexto: quien eres, de que va la reunion, que quieres decir y que no..."></textarea>

@@ -185,7 +185,8 @@ class App:
             height=int(geometry.get("height", 760)),
             x=geometry.get("x"),
             y=geometry.get("y"),
-            min_size=(720, 420),
+            # Pequena en una esquina, junto a "Mantener sobre otras ventanas", tambien vale.
+            min_size=(480, 360),
             background_color="#000000",
             on_top=bool(self.settings.get("on_top", False)),
             text_select=True,

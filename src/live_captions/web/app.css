@@ -215,8 +215,59 @@ button.primary:hover { background: #fff; }
   box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
 }
 
-/* Barra lateral del asistente, de ancho ajustable. */
-.assistant { flex: none; width: var(--sidebar, 420px); min-width: 300px; max-width: 65vw; }
+/* Barra lateral del asistente, de ancho ajustable; cede antes de salirse de la ventana. */
+.assistant { flex: 0 1 var(--sidebar, 420px); min-width: 280px; max-width: 60%; }
+.conversation { container-type: inline-size; }
+.close-assistant { display: none; }
+
+/* Ventana estrecha: la conversacion ocupa todo y el asistente se abre encima, como un panel. */
+.layout.narrow { position: relative; }
+.layout.narrow .conversation { min-width: 0; }
+.layout.narrow .splitter { display: none; }
+.layout.narrow .assistant {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  z-index: 5;
+  width: min(420px, 100%);
+  max-width: none;
+  min-width: 0;
+  box-shadow: -18px 0 44px rgba(0, 0, 0, .75);
+  animation: slide-in .18s ease-out;
+}
+.layout.narrow .close-assistant { display: inline-block; font-size: 15px; line-height: 1; padding: 4px 8px; }
+@keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
+
+/* Aviso de sugerencia nueva con el asistente cerrado. */
+.toggle.news { position: relative; }
+.toggle.news::after {
+  content: "";
+  position: absolute;
+  top: 3px; right: 3px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.short { display: none; }
+@container (max-width: 480px) {
+  .conversation .count, .conversation .long { display: none; }
+  .conversation .short { display: inline; }
+  .lines { padding: 10px 14px 24px; }
+  .row { grid-template-columns: 1fr; row-gap: 0; }
+  .row time { line-height: 18px; }
+}
+
+@media (max-width: 760px) {
+  body { padding: 10px; gap: 10px; }
+  .meter { display: none; }
+  .bar { gap: 8px; }
+  .record { min-width: 0; padding: 8px 14px; }
+  .toggle { padding: 5px 8px; }
+}
+@media (max-width: 560px) {
+  .clock { display: none; }
+}
 @keyframes fresh { from { opacity: 0; } }
 @keyframes settle { from { opacity: .55; } }
 

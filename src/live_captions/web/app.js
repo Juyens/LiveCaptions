@@ -54,9 +54,9 @@ async function copyText(text, button) {
     area.remove();
   }
   if (button) {
-    const label = button.textContent;
+    const label = [...button.childNodes]; // puede llevar etiqueta larga y corta
     button.textContent = "Copiado";
-    setTimeout(() => (button.textContent = label), 1200);
+    setTimeout(() => button.replaceChildren(...label), 1200);
   }
 }
 
@@ -260,7 +260,17 @@ const pressed = (id) => $(id).getAttribute("aria-pressed") === "true";
 
 const setMic = toggleButton("mic", (on) => api().set_mic(on));
 const setShowSpanish = toggleButton("show-spanish", () => layoutChanged());
-const setShowAssistant = toggleButton("show-assistant", () => layoutChanged());
+// El boton Asistente no es un simple interruptor: en ventana ancha fija o quita la barra (y
+// se recuerda); en estrecha abre o cierra el panel superpuesto (y no se recuerda).
+$("show-assistant").addEventListener("click", () => {
+  if (narrow.matches) {
+    ui.overlayOpen = !ui.overlayOpen;
+    applyLayout();
+  } else {
+    ui.showAssistant = !ui.showAssistant;
+    layoutChanged();
+  }
+});
 
 // Menus desplegables: uno abierto a la vez; se cierran con clic fuera o Escape.
 const menus = [
@@ -282,7 +292,12 @@ document.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") showMenu(null, false);
+  if (event.key !== "Escape") return;
+  showMenu(null, false);
+  if (narrow.matches && ui.overlayOpen && !settingsDialog.open) {
+    ui.overlayOpen = false;
+    applyLayout();
+  }
 });
 
 $("more").addEventListener("click", () => showMenu($("menu"), $("menu").hidden));
@@ -338,24 +353,51 @@ $("mic-pick").addEventListener("click", openMicMenu);
 
 const layout = $("layout");
 const sidebar = $("assistant");
+// Por debajo de este ancho no caben conversacion y asistente lado a lado.
+const narrow = window.matchMedia("(max-width: 880px)");
+ui.showAssistant = true; // en ventana ancha: barra fija o no (se guarda)
+ui.overlayOpen = false; // en ventana estrecha: panel superpuesto abierto o no
+ui.sidebarWidth = null; // ancho elegido arrastrando, en px
 
-function sidebarWidth() {
-  return Math.round(sidebar.getBoundingClientRect().width) || null;
+function assistantVisible() {
+  return narrow.matches ? ui.overlayOpen : ui.showAssistant;
 }
 
 function saveLayout() {
-  api().set_layout(pressed("show-spanish"), pressed("show-assistant"), sidebarWidth());
+  api().set_layout(pressed("show-spanish"), ui.showAssistant, ui.sidebarWidth);
 }
 
 function applyLayout() {
+  const visible = assistantVisible();
+  const opening = visible && sidebar.hidden;
   layout.classList.toggle("no-es", !pressed("show-spanish"));
-  sidebar.hidden = !pressed("show-assistant");
-  $("splitter").hidden = sidebar.hidden;
+  layout.classList.toggle("narrow", narrow.matches);
+  sidebar.hidden = !visible;
+  $("splitter").hidden = !visible;
+  $("show-assistant").setAttribute("aria-pressed", String(visible));
+  if (visible) $("show-assistant").classList.remove("news");
+  // Lo que llego con el panel cerrado no pudo desplazarse: al abrir, a lo ultimo.
+  if (opening) $("feed").scrollTop = $("feed").scrollHeight;
 }
 
 function layoutChanged() {
   applyLayout();
   saveLayout();
+}
+
+narrow.addEventListener("change", () => {
+  ui.overlayOpen = false; // al estrechar la ventana, el panel no aparece de golpe encima
+  applyLayout();
+});
+
+$("close-assistant").addEventListener("click", () => {
+  ui.overlayOpen = false;
+  applyLayout();
+});
+
+// Una sugerencia con el asistente cerrado deja un punto en su boton.
+function notifyAssistant() {
+  if (!assistantVisible()) $("show-assistant").classList.add("news");
 }
 
 $("splitter").addEventListener("pointerdown", (event) => {
@@ -365,8 +407,10 @@ $("splitter").addEventListener("pointerdown", (event) => {
   splitter.setPointerCapture(event.pointerId);
   splitter.classList.add("dragging");
   const move = (e) => {
-    const width = Math.max(300, Math.min(window.innerWidth * 0.65, startWidth + startX - e.clientX));
-    layout.style.setProperty("--sidebar", `${Math.round(width)}px`);
+    const limit = layout.getBoundingClientRect().width * 0.6;
+    const width = Math.round(Math.max(280, Math.min(limit, startWidth + startX - e.clientX)));
+    layout.style.setProperty("--sidebar", `${width}px`);
+    ui.sidebarWidth = width;
   };
   const stop = () => {
     splitter.classList.remove("dragging");
@@ -412,6 +456,7 @@ function addSuggestion(s) {
     card.append(row);
   }
   addCard(card);
+  notifyAssistant();
 }
 
 function chatStarted(text) {
@@ -886,7 +931,15 @@ window.lc = {
 
 // -- arranque ----------------------------------------------------------------------------
 
-window.addEventListener("pywebviewready", async () => {
+// pywebview avisa con `pywebviewready`; si la API ya estaba inyectada al cargar este script,
+// el aviso pudo pasar antes de escucharlo, asi que se arranca directamente (una sola vez).
+let started = false;
+if (window.pywebview?.api?.state) init();
+else window.addEventListener("pywebviewready", init);
+
+async function init() {
+  if (started) return;
+  started = true;
   const state = await api().state();
   ui.ready = state.ready;
   ui.running = state.running;
@@ -899,9 +952,12 @@ window.addEventListener("pywebviewready", async () => {
   if (state.mic_device) $("mic").title = `Microfono: ${state.mic_device}`;
   onTop.setAttribute("aria-checked", String(state.on_top));
   setShowSpanish(state.spanish);
-  setShowAssistant(state.assistant);
-  if (state.sidebar_width) layout.style.setProperty("--sidebar", `${state.sidebar_width}px`);
+  ui.showAssistant = state.assistant;
+  if (state.sidebar_width) {
+    ui.sidebarWidth = state.sidebar_width;
+    layout.style.setProperty("--sidebar", `${state.sidebar_width}px`);
+  }
   applyLayout();
   $("context").value = state.context;
   renderAssistantConfig(state.assistant_config);
-});
+}
