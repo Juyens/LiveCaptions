@@ -107,10 +107,43 @@ def main() -> int:
 
     claim_taskbar_identity()
 
-    from live_captions.app import App
+    try:
+        from live_captions.app import App
 
-    App(transcripts_dir()).run()
+        App(transcripts_dir()).run()
+    except Exception:
+        report_crash(traceback.format_exc())
+        return 1
     return 0
+
+
+def report_crash(details: str) -> None:
+    """Un fallo al arrancar: se guarda entero en un log y se avisa con un mensaje legible.
+
+    Sin esto, PyInstaller muestra su dialogo de "Unhandled exception" con una traza cortada,
+    que en el PC de otra persona no hay forma de copiar entera.
+    """
+    folder = Path(os.environ.get("APPDATA") or Path.home()) / "LiveCaptions"
+    log = folder / "error.log"
+    with contextlib.suppress(OSError):
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with log.open("a", encoding="utf-8") as file:
+            file.write(f"--- {stamp}\n{details}\n")
+    hint = ""
+    if "Python.Runtime" in details:
+        hint = (
+            "\n\nSuele pasar con un zip descargado: en Propiedades del zip marca "
+            "«Desbloquear» y vuelve a extraerlo."
+        )
+    message = (
+        "Live Captions no pudo abrir la ventana.\n\n"
+        f"{details.strip().splitlines()[-1]}{hint}\n\nDetalles completos en:\n{log}"
+    )
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Live Captions", 0x10)  # MB_ICONERROR
 
 
 if __name__ == "__main__":

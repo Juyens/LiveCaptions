@@ -47,6 +47,9 @@ def build() -> int:
         return result.returncode
 
     exe = DIST / "LiveCaptions.exe"
+    # Sin esto, una copia descargada (zip con Mark of the Web) no abre la ventana: ver el
+    # comentario del propio archivo.
+    shutil.copy2(ROOT / "tools" / "LiveCaptions.exe.config", DIST / "LiveCaptions.exe.config")
     print(f"\n{exe}")
     print(f"  ejecutable         {human(size_of(exe))}")
     print(f"  carpeta completa   {human(size_of(DIST))}")
